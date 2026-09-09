@@ -423,6 +423,25 @@ export function useSync(userId: string | null, options?: SyncOptions) {
           options.onDataFetched(mergedData);
         }
 
+        // ✅ 给「从云端下载」可见反馈：统计云端记录数 + 更新最后同步时间
+        const cloudCount =
+          (data.todos?.length || 0) + (data.checkInProjects?.length || 0) +
+          (data.checkInRecords?.length || 0) + (data.timeRecords?.length || 0) +
+          (data.achievementLogs?.length || 0) + (data.inspirations?.length || 0) +
+          (data.shopItems?.length || 0) + (data.fdGoals?.length || 0) +
+          (data.fdTasks?.length || 0) + (data.fdHabits?.length || 0) +
+          (data.fdHabitLogs?.length || 0) + (data.summaryDocs?.length || 0) +
+          (data.summaryIdeas?.length || 0) + (data.summaryLogs?.length || 0);
+        setSyncState(prev => ({
+          ...prev,
+          isSyncing: false,
+          syncStatus: 'synced',
+          syncMessage: cloudCount > 0
+            ? `已从云端获取 ${cloudCount} 条记录并合并到本地（只下载不上传）`
+            : '云端暂无数据，本地记录保持不变',
+          lastSync: syncedAt
+        }));
+
         return mergedData;
       }
     } catch (error) {

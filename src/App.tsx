@@ -235,6 +235,10 @@ function SyncCard({ user, syncState, overview, onSync, onFetch }: {
         </button>
       </div>
 
+      <div className="sync-hint muted small">
+        上传并合并：把本地「待同步」的改动推到云端；从云端下载：拉取云端最新数据到本机（只下载不上传）。
+      </div>
+
       <div className="sync-meta muted small">
         {syncState.lastSync ? `最后同步：${new Date(syncState.lastSync).toLocaleString('zh-CN')}` : '尚未同步'}
         <span className="acct">账号：{user.email}</span>
