@@ -4,6 +4,10 @@
   "rewrites": [
     { "source": "/achieve", "destination": "/achieve/index.html" },
     { "source": "/achieve/(.*)", "destination": "/achieve/index.html" },
+    { "source": "/focusdesk", "destination": "/focusdesk/index.html" },
+    { "source": "/focusdesk/(.*)", "destination": "/focusdesk/index.html" },
+    { "source": "/summarydesk", "destination": "/summarydesk/index.html" },
+    { "source": "/summarydesk/(.*)", "destination": "/summarydesk/index.html" },
     { "source": "/(.*)", "destination": "/index.html" }
   ]
 }
