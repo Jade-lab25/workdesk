@@ -1309,6 +1309,10 @@ function updateRecord(rec){
 function deleteRecord(id){
   State.records = State.records.filter(function(r){return r.id!==id;});
   saveLocal();
+  // 轻量路径：删除属低频操作，立即推送云端（不等防抖，避免删后立刻刷新导致云端旧数据被拉回）
+  if(window.WB_Cloud && WB_Cloud.enabled && WB_Cloud.isCloud()){
+    WB_Cloud.pushAll().catch(function(){});
+  }
   var isServerId = id && id.indexOf('r_')!==0;
   if(db && State.online && isServerId){
     return db.deleteRecord({ databaseId: DATABASE_ID, recordId: id })
@@ -3279,7 +3283,7 @@ function init(){
   });
 
   // initial render with local data
-  seedIfEmpty();
+  // seedIfEmpty(); // 已移除：不再自动填充示例数据（用户反馈其为不需要的测试数据）
   autoArchiveOldDone();
   loadHabits();   // 从本地记录加载长期打卡数据
   renderAll();
@@ -4011,7 +4015,6 @@ function bindCalendarEvents(c){
     var sel = function(t, cols){ return supabase.from(t).select(cols).eq('user_id', u); };
     // 修复：fd_goals/fd_tasks/fd_habits 均无 habit_id 列，原 select 三表全报错 → 删除分支跳过 → 云端删不掉
     return Promise.all([sel('fd_goals','id,user_id'), sel('fd_tasks','id,user_id'), sel('fd_habits','id,user_id')])
-    return Promise.all([sel('fd_goals'), sel('fd_tasks'), sel('fd_habits')])
       .then(function(rs){
         var dels = [];
         (rs[0].data || []).forEach(function(g){ if(!localGoalIds[g.id]) dels.push(supabase.from('fd_goals').delete().eq('id', g.id)); });
@@ -4066,7 +4069,7 @@ function bindCalendarEvents(c){
           setSync('offline','同步失败，稍后重试');
           schedulePush();
         });
-    }, 800);
+    }, 300);
   }
 
   /* ---------- 对外接口 ---------- */
