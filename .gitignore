@@ -1,0 +1,17 @@
+# 依赖与构建产物
+node_modules
+dist
+*.log
+.vercel
+
+# 密钥不入库（含 achieve 副本的 .env）
+.env
+**/.env
+
+# 编辑器
+.vscode
+.idea
+.DS_Store
+
+# 无用归档
+achieve/dist.zip

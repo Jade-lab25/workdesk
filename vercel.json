@@ -1,0 +1,9 @@
+{
+  "buildCommand": "npm run assemble",
+  "outputDirectory": "dist",
+  "rewrites": [
+    { "source": "/achieve", "destination": "/achieve/index.html" },
+    { "source": "/achieve/(.*)", "destination": "/achieve/index.html" },
+    { "source": "/(.*)", "destination": "/index.html" }
+  ]
+}
