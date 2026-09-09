@@ -34,7 +34,11 @@ export default function App() {
   }, []);
 
   // 同步协议：登录用户 ID；未登录（含本地模式）传 null，仅读写 localStorage
-  const { syncState, loadLocalData, performSync, fetchFromCloud } = useSync(user?.id ?? null);
+  // onDataFetched：下载/同步完成后刷新 React state，让「从云端下载」有可见反馈
+  const [dataVersion, setDataVersion] = useState(0);
+  const { syncState, loadLocalData, performSync, fetchFromCloud } = useSync(user?.id ?? null, {
+    onDataFetched: () => setDataVersion((v) => v + 1),
+  });
 
   // 三组数据概览：成就 / 目标 / 总结
   const overview = useMemo(() => {
@@ -56,7 +60,7 @@ export default function App() {
       count: g.items.length,
       dirty: g.items.filter((i) => isItemDirty(i)).length,
     }));
-  }, [loadLocalData, syncState.lastSync, syncState.isSyncing]);
+  }, [loadLocalData, syncState.lastSync, syncState.isSyncing, dataVersion]);
 
   if (checking) return <div className="page"><div className="muted">加载中…</div></div>;
 

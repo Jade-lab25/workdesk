@@ -2923,6 +2923,7 @@ var App = (function () {
     var sel = function(t){ return supabase.from(t).select('id,user_id').eq('user_id', u); };
     return Promise.all([sel('summary_ideas'), sel('summary_logs'), sel('summary_docs')])
       .then(function(rs){
+        for(var i=0;i<rs.length;i++){ if(rs[i].error) throw new Error(rs[i].error.message); }
         var dels = [];
         (rs[0].data || []).forEach(function(r){ if(!localIds.summary_ideas[r.id]) dels.push(supabase.from('summary_ideas').delete().eq('id', r.id)); });
         (rs[1].data || []).forEach(function(r){ if(!localIds.summary_logs[r.id]) dels.push(supabase.from('summary_logs').delete().eq('id', r.id)); });

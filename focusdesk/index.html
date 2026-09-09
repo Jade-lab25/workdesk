@@ -4008,7 +4008,9 @@ function bindCalendarEvents(c){
       (sysRec.habits || []).forEach(function(h){ habits.push(habitToRow(h, u, now)); localHabitIds[h.id] = 1; });
       hlogs = sysRec.habitLogs || [];
     }
-    var sel = function(t){ return supabase.from(t).select('id,habit_id,user_id').eq('user_id', u); };
+    var sel = function(t, cols){ return supabase.from(t).select(cols).eq('user_id', u); };
+    // 修复：fd_goals/fd_tasks/fd_habits 均无 habit_id 列，原 select 三表全报错 → 删除分支跳过 → 云端删不掉
+    return Promise.all([sel('fd_goals','id,user_id'), sel('fd_tasks','id,user_id'), sel('fd_habits','id,user_id')])
     return Promise.all([sel('fd_goals'), sel('fd_tasks'), sel('fd_habits')])
       .then(function(rs){
         var dels = [];
