@@ -1595,13 +1595,13 @@ function bindTodayEvents(c){
         var st = computeSubStatus(parent);
         parent.status = st; parent.done = (st===ST_DONE);
       }
-      // 若目标所有拆解完成，提示目标可标记完成（不自动改目标状态，交由用户）
+      // 若目标所有拆解完成，自动标记完成并归档
       var leaves = countSubLeaves(g.subtasks);
       updateRecord(g).then(function(){
         renderAll();
         toast('已完成');
-        if(leaves.total>0 && leaves.done===leaves.total){
-          setTimeout(function(){ toast('「'+g.title+'」全部拆解已完成 🎉'); }, 600);
+        if(leaves.total>0 && leaves.done===leaves.total && g.status!==ST_ARCHIVE){
+          setTimeout(function(){ completeGoalAndArchive(g); }, 600);
         }
       });
     });
@@ -1794,6 +1794,26 @@ function bindListEvents(c){
 }
 
 /* ============ Goals view ============ */
+/* 目标完成：标记完成并归档（子任务全完成自动调用，也可手动点击完成按钮） */
+function completeGoalAndArchive(g){
+  if(!g || g.status===ST_ARCHIVE) return;
+  g.status = ST_ARCHIVE;
+  g.completedAt = g.completedAt || nowISO();
+  g.archivedAt = nowISO();
+  updateRecord(g).then(function(){
+    renderAll();
+    toast('目标「'+g.title+'」已完成并归档 🎉');
+  });
+}
+/* 拆解任务全部完成 → 自动完成并归档 */
+function autoCompleteGoalIfAllDone(g){
+  if(!g || g.status===ST_ARCHIVE) return;
+  var leaves = countSubLeaves(g.subtasks);
+  if(leaves.total>0 && leaves.done===leaves.total){
+    setTimeout(function(){ completeGoalAndArchive(g); }, 400);
+  }
+}
+
 function renderGoals(){
   var c = document.getElementById('content');
   var goals = State.records.filter(function(r){return r.type===TYPE_GOAL && r.status!==ST_ARCHIVE && !isRecordHidden(r);});
@@ -1836,6 +1856,7 @@ function renderGoalCard(g, compact){
   var linked = State.records.filter(function(r){return r.type===TYPE_TASK && r.goal===g.title;});
   var h = '<div class="goal-card" data-id="'+g.id+'">';
   h += '<div class="gc-actions">';
+  h += '<button data-act="done" title="标记完成并归档">'+ICONS.check+'</button>';
   h += '<button data-act="edit" title="编辑">'+ICONS.edit+'</button>';
   h += '<button data-act="del" title="删除" class="del">'+ICONS.trash+'</button>';
   h += '</div>';
@@ -1846,6 +1867,7 @@ function renderGoalCard(g, compact){
   if(g.priority) h += priorityTag(g.priority);
   if(g.owner) h += ownerTag(g.owner);
   if(g.dueDate) h += dueTag(g.dueDate, g.status);
+  if(g.status===ST_DONE) h += '<span style="display:inline-block;padding:1px 8px;border-radius:10px;font-size:11px;font-weight:600;background:var(--success-bg);color:var(--success);">已完成</span>';
   if(g.createdAt) h += '<span class="created-at" title="创建时间">'+fmtCreated(g.createdAt)+'</span>';
   h += '</div></div></div>';
   if(g.note) h += '<div class="gc-desc">'+escapeHtml(g.note)+'</div>';
@@ -1944,6 +1966,8 @@ function bindGoalEvents(c){
     if(!g) return;
     g.subtasks = g.subtasks || [];
 
+    var doneBtn = card.querySelector('[data-act="done"]');
+    if(doneBtn) doneBtn.addEventListener('click', function(){ completeGoalAndArchive(g); });
     card.querySelector('[data-act="edit"]').addEventListener('click', function(){ openEditor(g); });
     card.querySelector('[data-act="del"]').addEventListener('click', function(){
       var leaves = countSubLeaves(g.subtasks);
@@ -1970,7 +1994,7 @@ function bindGoalEvents(c){
         s.completedAt = newDone ? nowISO() : '';
         (s.children||[]).forEach(function(ch){ ch.done=newDone; ch.completedAt=newDone ? nowISO() : ''; });
         s.status = newDone ? ST_DONE : ST_TODO;
-        updateRecord(g).then(function(){ renderAll(); });
+        updateRecord(g).then(function(){ renderAll(); if(newDone) autoCompleteGoalIfAllDone(g); });
       });
     });
     // ---- 一级任务：展开/收起 ----
