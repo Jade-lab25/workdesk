@@ -4083,7 +4083,11 @@ function bindCalendarEvents(c){
           });
         });
       });
-      return p.then(function(){ return { data: null, error: ok ? null : r.error }; });
+      return p.then(function(){
+        // 全部失败时抛出错误，避免 pushAll 假"成功"
+        if(ok === 0) throw new Error(table + ' 全部 ' + rows.length + ' 条插入失败：' + r.error.message);
+        return { data: null, error: null, okCount: ok, total: rows.length };
+      });
     });
   }
 
