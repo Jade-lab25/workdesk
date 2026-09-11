@@ -4052,7 +4052,7 @@ function bindCalendarEvents(c){
     try { subs = typeof g.subtasks === 'string' ? JSON.parse(g.subtasks) : (g.subtasks || []); } catch(e){ subs = []; }
     return { id: g.id, title: g.title, type: '目标', status: GOAL_STATUS_RMAP[g.status] || '进行中',
       priority: '', owner: '', dueDate: '', tags: '', note: g.description || '',
-      subtasks: subs, createdAt: g.created_at || '', completedAt: '',
+      subtasks: subs, createdAt: g.created_at || '', updatedAt: g.updated_at || '', completedAt: '',
       order: g.sort || 0 };
   }
   function taskFromRow(t, goalById){
@@ -4064,7 +4064,7 @@ function bindCalendarEvents(c){
       status: STATUS_RMAP[t.status] || '待处理',
       priority: t.priority || '', owner: t.owner || '', dueDate: t.due_date || '',
       tags: t.tags || '', note: t.note || '', subtasks: subs,
-      goal: goalTitle, createdAt: t.created_at || '', completedAt: t.completed_at || '',
+      goal: goalTitle, createdAt: t.created_at || '', updatedAt: t.updated_at || '', completedAt: t.completed_at || '',
       order: t.sort || 0 };
   }
   function habitToRow(h, userId, now){
