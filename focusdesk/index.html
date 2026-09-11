@@ -3103,9 +3103,15 @@ function importJSON(file){
       var data = JSON.parse(e.target.result);
       if(!data.records || !Array.isArray(data.records)) throw new Error('invalid');
       if(!confirm('将导入 '+data.records.length+' 条记录，是否继续？（合并到现有数据，重复ID会覆盖）')) return;
+      var now = nowISO();
+      var importCount = 0;
       data.records.forEach(function(rec){
+        // 导入时刷新 updatedAt，确保 mergeCloudRecords 时本地版本被判定为"更新的"
+        // （避免被云端旧版本覆盖导致"导入后刷新反而少了"）
+        rec.updatedAt = now;
         var idx = State.records.findIndex(function(x){return x.id===rec.id;});
         if(idx>=0) State.records[idx]=rec; else State.records.push(rec);
+        importCount++;
         if(State.online && db && rec.id){
           if(rec.id.indexOf('r_')===0){
             var copy = Object.assign({}, rec); delete copy.id;
@@ -3118,7 +3124,14 @@ function importJSON(file){
       saveLocal();
       try { localStorage.removeItem(STORAGE_PENDING_KEY); State.pendingOps=[]; } catch(e){}
       renderAll();
-      toast('已导入 '+data.records.length+' 条');
+      toast('已导入 '+importCount+' 条');
+      // 导入后立即主动推送到云端（不等防抖），确保数据先上云再被轮询拉取
+      if(window.WB_Cloud && WB_Cloud.enabled && WB_Cloud.isCloud()){
+        setSync('syncing','正在上传导入数据...');
+        WB_Cloud.pushAll()
+          .then(function(){ setSync('', '导入数据已同步'); })
+          .catch(function(e){ setSync('offline','上传失败：'+(e&&e.message?e.message:'稍后重试')); });
+      }
     } catch(err){
       toast('文件格式无效', true);
     }
@@ -3402,7 +3415,9 @@ function init(){
   }
 }
 
-/* 轻量路径：云端拉取的记录与本地合并（云端优先；本地独有保留待上推） */
+/* 轻量路径：云端拉取的记录与本地合并（updatedAt 较新者优先；本地独有保留待上推）
+ * 修复：之前是"云端优先"，导入/本地修改后若云端 id 相同，会被旧的云端版本覆盖，
+ *       导致刚导入的内容被拉取"清空"。改为按时间戳取最新版本。 */
 function mergeCloudRecords(cloudRecs){
   // 多端安全：本地残留记录若已被显式删除（删除标记），不参与合并（防止复活后再被推送回云端）
   var delMap = {};
@@ -3410,21 +3425,52 @@ function mergeCloudRecords(cloudRecs){
   var now2 = Date.now();
   Object.keys(delMap).forEach(function(did){ if(delMap[did].ts && now2 - delMap[did].ts > 30*24*3600*1000) delete delMap[did]; });
   try { localStorage.setItem(STORAGE_DEL_KEY, JSON.stringify(delMap)); } catch(e){}
-  var seen = {};
-  var merged = [];
+
+  // 取记录的最后更新时间（兼容多个字段，没有则按 0 算）
+  function recTime(r){
+    if(!r) return 0;
+    var t = r.updatedAt || r.updated_at || r.completedAt || r.completed_at || r.createdAt || r.created_at;
+    if(!t) return 0;
+    var d = new Date(t);
+    return isNaN(d.getTime()) ? 0 : d.getTime();
+  }
+
+  var cloudMap = {};
   (cloudRecs || []).forEach(function(cr){
-    if(cr && cr.id){ seen[cr.id] = 1; merged.push(cr); }
+    if(cr && cr.id) cloudMap[cr.id] = cr;
   });
+
+  var merged = [];
+  var added = {};
+  // 先遍历本地：每条与云端对比，取更新时间较新的
   State.records.forEach(function(lr){
-    if(!lr || !lr.id || seen[lr.id]) return;
+    if(!lr || !lr.id) return;
     if(delMap[lr.id]) return; // 已被显式删除的本地残留记录：丢弃
-    // 习惯系统记录按 title 去重：云端已有同名记录时，丢弃本地旧版本（id 规则不同会误判为两条）
-    if(lr.title === '__focusdesk_habits__'){
-      var cloudHas = merged.some(function(m){ return m.title === '__focusdesk_habits__'; });
-      if(cloudHas) return;
+    added[lr.id] = 1;
+    var cr = cloudMap[lr.id];
+    if(cr){
+      // id 相同：取 updatedAt 较新的那条
+      merged.push(recTime(lr) >= recTime(cr) ? lr : cr);
+    } else {
+      // 只有本地有：保留（稍后由 pushAll 推上云端）
+      merged.push(lr);
     }
-    merged.push(lr);
   });
+  // 再补云端有但本地没有的（其他设备新增的）
+  (cloudRecs || []).forEach(function(cr){
+    if(!cr || !cr.id || added[cr.id]) return;
+    merged.push(cr);
+  });
+
+  // 习惯系统记录：如果云端和本地各有一条 __focusdesk_habits__，保留时间较新的（上面已经按 id 处理了）
+  // 但如果云端和本地 id 不同却都是习惯系统记录，只保留一条（取较新的）——兼容 id 规则不同的历史情况
+  var habitRecs = merged.filter(function(m){ return m.title === '__focusdesk_habits__'; });
+  if(habitRecs.length > 1){
+    var newest = habitRecs.reduce(function(a,b){ return recTime(a) >= recTime(b) ? a : b; });
+    merged = merged.filter(function(m){ return m.title !== '__focusdesk_habits__'; });
+    merged.push(newest);
+  }
+
   State.records = merged;
   saveLocal();
 }
@@ -3982,6 +4028,7 @@ function bindCalendarEvents(c){
       status: GOAL_STATUS_MAP[rec.status] || 'active',
       progress: 0,
       sort: typeof rec.order === 'number' ? rec.order : 0,
+      subtasks: JSON.stringify(rec.subtasks || []),
       created_at: rec.createdAt || now, updated_at: now, synced_at: now
     };
   }
@@ -4001,9 +4048,11 @@ function bindCalendarEvents(c){
     };
   }
   function goalFromRow(g){
+    var subs = [];
+    try { subs = typeof g.subtasks === 'string' ? JSON.parse(g.subtasks) : (g.subtasks || []); } catch(e){ subs = []; }
     return { id: g.id, title: g.title, type: '目标', status: GOAL_STATUS_RMAP[g.status] || '进行中',
       priority: '', owner: '', dueDate: '', tags: '', note: g.description || '',
-      subtasks: [], createdAt: g.created_at || '', completedAt: '',
+      subtasks: subs, createdAt: g.created_at || '', completedAt: '',
       order: g.sort || 0 };
   }
   function taskFromRow(t, goalById){
