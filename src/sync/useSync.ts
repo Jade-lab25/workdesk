@@ -374,7 +374,7 @@ export function useSync(userId: string | null, options?: SyncOptions) {
     }
 
     try {
-      const { data, success } = await fetchAll(userId);
+      const { data, success, errors } = await fetchAll(userId);
       if (success && data) {
         // 先加载本地数据，保留 is_dirty 的记录
         const localData = loadLocalData();
@@ -444,8 +444,22 @@ export function useSync(userId: string | null, options?: SyncOptions) {
 
         return mergedData;
       }
+      // ✅ 修复：下载失败必须有可见反馈，不能静默（否则按钮看起来「没反应」）
+      console.error('[Sync] fetchFromCloud fetchAll failed:', errors);
+      setSyncState(prev => ({
+        ...prev,
+        isSyncing: false,
+        syncStatus: 'error',
+        syncMessage: `下载失败: ${(errors || []).join('; ') || '未知错误（请检查网络或数据库状态）'}`
+      }));
     } catch (error) {
       console.error('[Sync] fetchFromCloud error:', error);
+      setSyncState(prev => ({
+        ...prev,
+        isSyncing: false,
+        syncStatus: 'error',
+        syncMessage: `下载失败: ${(error as Error).message}`
+      }));
     }
 
     return loadLocalData();

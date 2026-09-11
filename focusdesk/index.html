@@ -691,6 +691,7 @@ var ICONS = {
 var DATABASE_ID = 'HHhhQsiXJHBqyPHFqhFl39';
 var STORAGE_KEY = 'wb_focusdesk_v1';
 var STORAGE_PENDING_KEY = 'wb_focusdesk_pending';
+var STORAGE_DEL_KEY = 'wb_focusdesk_deleted'; // 多端安全：显式删除标记（谁删的、删哪张表）
 var TYPE_TASK='任务', TYPE_IDEA='灵感', TYPE_GOAL='目标';
 var ST_TODO='待处理', ST_DOING='进行中', ST_DONE='已完成', ST_IDEA='待转化', ST_ARCHIVE='已归档';
 var PRIORITY_COLORS = { 'P0':'p0','P1':'p1','P2':'p2','P3':'p3' };
@@ -1156,6 +1157,12 @@ function deleteHabit(id){
   if(!confirm('删除打卡「'+h.title+'」？其历史打卡记录也将一并删除。')) return;
   State.habits = State.habits.filter(function(x){return x.id!==id;});
   State.habitLogs = State.habitLogs.filter(function(l){return l.habitId!==id;});
+  // 多端安全：记录习惯删除标记
+  try {
+    var dm = JSON.parse(localStorage.getItem(STORAGE_DEL_KEY) || '{}');
+    dm[id] = { table: 'fd_habits', ts: Date.now() };
+    localStorage.setItem(STORAGE_DEL_KEY, JSON.stringify(dm));
+  } catch(e){}
   saveHabitsToRecord();
   renderAll();
   toast('已删除');
@@ -1307,7 +1314,16 @@ function updateRecord(rec){
 }
 
 function deleteRecord(id){
+  var delRec = State.records.find(function(r){return r.id===id;});
   State.records = State.records.filter(function(r){return r.id!==id;});
+  // 多端安全：记录删除标记（含所属表），云端删除只针对显式标记，避免其他浏览器误删/复活
+  if(delRec && delRec.id){
+    try {
+      var dm = JSON.parse(localStorage.getItem(STORAGE_DEL_KEY) || '{}');
+      dm[delRec.id] = { table: (delRec.type===TYPE_GOAL ? 'fd_goals' : 'fd_tasks'), ts: Date.now() };
+      localStorage.setItem(STORAGE_DEL_KEY, JSON.stringify(dm));
+    } catch(e){}
+  }
   saveLocal();
   // 轻量路径：删除属低频操作，立即推送云端（不等防抖，避免删后立刻刷新导致云端旧数据被拉回）
   if(window.WB_Cloud && WB_Cloud.enabled && WB_Cloud.isCloud()){
@@ -2435,6 +2451,11 @@ function bindArchiveEvents(c){
       var r = State.records.find(function(x){return x.id===id;});
       if(!r) return;
       r.status = ST_DONE; r.completedAt = nowISO(); r.archivedAt = '';
+      // 恢复即取消该记录的删除标记，防止合并逻辑将其丢弃
+      try {
+        var dm = JSON.parse(localStorage.getItem(STORAGE_DEL_KEY) || '{}');
+        if(dm[r.id]){ delete dm[r.id]; localStorage.setItem(STORAGE_DEL_KEY, JSON.stringify(dm)); }
+      } catch(e){}
       updateRecord(r).then(function(){ renderAll(); toast('已恢复到已完成'); });
     });
     var purge = it.querySelector('[data-act="purge"]');
@@ -3341,6 +3362,18 @@ function init(){
             out.addEventListener('click', function(){ WB_Cloud.signOut(); });
             foot.appendChild(out);
           }
+          // 多端一致：每 30 秒拉取云端变化并合并 + 页面重新可见时立即同步
+          var autoSync = function(){
+            if(!window.WB_Cloud || !WB_Cloud.enabled || !WB_Cloud.isCloud() || WB_Cloud.syncing()) return;
+            WB_Cloud.fetchAll().then(function(recs){
+              mergeCloudRecords(recs);
+              WB_Cloud.pushAll().catch(function(){});
+            }).catch(function(){});
+          };
+          setInterval(autoSync, 30000);
+          document.addEventListener('visibilitychange', function(){
+            if(!document.hidden) autoSync();
+          });
         }).catch(function(err){
           console.warn('cloud fetch failed', err);
           State.online = false;
@@ -3360,6 +3393,12 @@ function init(){
 
 /* 轻量路径：云端拉取的记录与本地合并（云端优先；本地独有保留待上推） */
 function mergeCloudRecords(cloudRecs){
+  // 多端安全：本地残留记录若已被显式删除（删除标记），不参与合并（防止复活后再被推送回云端）
+  var delMap = {};
+  try { delMap = JSON.parse(localStorage.getItem(STORAGE_DEL_KEY) || '{}'); } catch(e){}
+  var now2 = Date.now();
+  Object.keys(delMap).forEach(function(did){ if(delMap[did].ts && now2 - delMap[did].ts > 30*24*3600*1000) delete delMap[did]; });
+  try { localStorage.setItem(STORAGE_DEL_KEY, JSON.stringify(delMap)); } catch(e){}
   var seen = {};
   var merged = [];
   (cloudRecs || []).forEach(function(cr){
@@ -3367,6 +3406,7 @@ function mergeCloudRecords(cloudRecs){
   });
   State.records.forEach(function(lr){
     if(!lr || !lr.id || seen[lr.id]) return;
+    if(delMap[lr.id]) return; // 已被显式删除的本地残留记录：丢弃
     // 习惯系统记录按 title 去重：云端已有同名记录时，丢弃本地旧版本（id 规则不同会误判为两条）
     if(lr.title === '__focusdesk_habits__'){
       var cloudHas = merged.some(function(m){ return m.title === '__focusdesk_habits__'; });
@@ -3808,6 +3848,7 @@ function bindCalendarEvents(c){
   var currentUser = null;
   var localMode = false;
   var pushTimer = null;
+  var _syncing = false; // 防重入：轮询/手动/防抖共用同一把锁
   var authedCallbacks = [];
 
   function nowISO(){ return new Date().toISOString(); }
@@ -4015,6 +4056,8 @@ function bindCalendarEvents(c){
    * habit_logs：RLS 无 UPDATE 策略 → 按习惯"删全量再重插"，避免冲突与重复 */
   function pushAll(){
     if(!currentUser || !supabase) return Promise.resolve();
+    if(_syncing) return Promise.resolve(); // 防重入：已有同步在进行，跳过本次
+    _syncing = true;
     var u = currentUser.id;
     var now = nowISO();
     var goals = [], tasks = [], habits = [], hlogs = [];
@@ -4037,17 +4080,25 @@ function bindCalendarEvents(c){
       hlogs = sysRec.habitLogs || [];
     }
     var sel = function(t, cols){ return supabase.from(t).select(cols).eq('user_id', u); };
-    // 修复：fd_goals/fd_tasks/fd_habits 均无 habit_id 列，原 select 三表全报错 → 删除分支跳过 → 云端删不掉
+    // 多端安全：云端删除只针对用户显式删除的记录（删除标记），不再「云端有本地无就删」，避免多个浏览器互相清数据
+    var delMap = {};
+    try { delMap = JSON.parse(localStorage.getItem(STORAGE_DEL_KEY) || '{}'); } catch(e){}
+    var goalDelIds = [], taskDelIds = [], habitDelIds = [];
+    Object.keys(delMap).forEach(function(did){
+      var d = delMap[did];
+      if(!d || !d.table) return;
+      if(d.table === 'fd_goals') goalDelIds.push(did);
+      else if(d.table === 'fd_tasks') taskDelIds.push(did);
+      else if(d.table === 'fd_habits') habitDelIds.push(did);
+    });
     return Promise.all([sel('fd_goals','id,user_id'), sel('fd_tasks','id,user_id'), sel('fd_habits','id,user_id')])
       .then(function(rs){
         var dels = [];
-        (rs[0].data || []).forEach(function(g){ if(!localGoalIds[g.id]) dels.push(supabase.from('fd_goals').delete().eq('id', g.id)); });
-        (rs[1].data || []).forEach(function(t){ if(!localTaskIds[t.id]) dels.push(supabase.from('fd_tasks').delete().eq('id', t.id)); });
-        var delHabitIds = [];
-        (rs[2].data || []).forEach(function(h){ if(!localHabitIds[h.id]) delHabitIds.push(h.id); });
-        if(delHabitIds.length){
-          dels.push(supabase.from('fd_habit_logs').delete().eq('user_id', u).in('habit_id', delHabitIds));
-          dels.push(supabase.from('fd_habits').delete().eq('user_id', u).in('id', delHabitIds));
+        goalDelIds.forEach(function(did){ dels.push(supabase.from('fd_goals').delete().eq('id', did)); });
+        taskDelIds.forEach(function(did){ dels.push(supabase.from('fd_tasks').delete().eq('id', did)); });
+        if(habitDelIds.length){
+          dels.push(supabase.from('fd_habit_logs').delete().eq('user_id', u).in('habit_id', habitDelIds));
+          dels.push(supabase.from('fd_habits').delete().eq('user_id', u).in('id', habitDelIds));
         }
         return Promise.all(dels);
       })
@@ -4077,7 +4128,9 @@ function bindCalendarEvents(c){
       })
       .then(function(r){
         if(r && r.error) throw new Error(r.error.message);
-      });
+      })
+      .then(function(){ _syncing = false; })
+      .catch(function(e){ _syncing = false; throw e; });
   }
 
   /* ---------- 保存挂钩：变更后防抖全量推送 ---------- */
@@ -4110,6 +4163,7 @@ function bindCalendarEvents(c){
     fetchAll: fetchAll,
     pushAll: pushAll,
     schedulePush: schedulePush,
+    syncing: function(){ return _syncing; },
     signOut: signOut,
     user: function(){ return currentUser; },
     isCloud: function(){ return !!currentUser && !localMode; }

@@ -426,7 +426,7 @@ export const userStats = {
       .eq('user_id', userId)
       .single();
     
-    if (error && error.message.includes('No rows')) {
+    if (error && (error.message?.includes('No rows') || (error as any)?.code === 'PGRST116')) {
       return { data: null, error: null };
     }
     
@@ -867,7 +867,7 @@ export const userSettings = {
       .eq('user_id', userId)
       .single();
 
-    if (error && error.message.includes('No rows')) {
+    if (error && (error.message?.includes('No rows') || (error as any)?.code === 'PGRST116')) {
       return { data: null, error: null };
     }
     return { data: data ? snakeToCamel(data) : null, error };
