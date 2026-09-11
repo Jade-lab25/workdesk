@@ -3345,12 +3345,17 @@ function init(){
         WB_Cloud.fetchAll().then(function(records){
           // 合并：云端优先，本地独有记录保留（稍后由 reconcile 补推上云）
           mergeCloudRecords(records);
-          WB_Cloud.pushAll();
+          return WB_Cloud.pushAll().then(function(syncRes){
           State.loaded = true;
           autoArchiveOldDone();
           loadHabits();   // 云端记录就位后重新加载长期打卡数据
           renderAll();
-          setSync('', user.email + ' · 已同步');
+          if(syncRes && syncRes.skipped && syncRes.skipped.length){
+            try { localStorage.setItem('wb_focusdesk_skipped', JSON.stringify(syncRes.skipped)); } catch(e){}
+            setSync('offline', '已同步（跳过 ' + syncRes.skipped.length + ' 条问题记录，详情见浏览器控制台）');
+          } else {
+            setSync('', user.email + ' · 已同步');
+          }
           // 退出登录入口
           var foot = document.querySelector('.sidebar-foot');
           if(foot && !document.getElementById('authSignOut')){
@@ -3362,13 +3367,19 @@ function init(){
             out.addEventListener('click', function(){ WB_Cloud.signOut(); });
             foot.appendChild(out);
           }
+          });
           // 多端一致：每 30 秒拉取云端变化并合并 + 页面重新可见时立即同步
           var autoSync = function(){
             if(!window.WB_Cloud || !WB_Cloud.enabled || !WB_Cloud.isCloud() || WB_Cloud.syncing()) return;
             WB_Cloud.fetchAll().then(function(recs){
               mergeCloudRecords(recs);
-              WB_Cloud.pushAll().catch(function(){});
-            }).catch(function(){});
+              WB_Cloud.pushAll().then(function(syncRes){
+                if(syncRes && syncRes.skipped && syncRes.skipped.length){
+                  try { localStorage.setItem('wb_focusdesk_skipped', JSON.stringify(syncRes.skipped)); } catch(e){}
+                  setSync('offline','已同步（跳过 ' + syncRes.skipped.length + ' 条问题记录）');
+                } else { setSync('', '已同步'); }
+              }).catch(function(e){ setSync('offline','同步失败：' + (e && e.message ? e.message : '网络错误')); });
+            }).catch(function(e){ setSync('offline','同步失败：' + (e && e.message ? e.message : '网络错误')); });
           };
           setInterval(autoSync, 30000);
           document.addEventListener('visibilitychange', function(){
@@ -4051,6 +4062,31 @@ function bindCalendarEvents(c){
       });
   }
 
+  /* 安全 upsert：整批失败 → 逐条尝试（跳过约束/外键问题记录，task 外键失败时去掉 goal_id 重试），避免一条坏记录阻断全部上云 */
+  function safeUpsert(table, rows, stripGoal, skipped){
+    return supabase.from(table).upsert(rows, { onConflict: 'id' }).then(function(r){
+      if(!r.error) return r;
+      console.warn('[Cloud] batch upsert failed on ' + table + ': ' + r.error.message + ' → retry one by one');
+      var p = Promise.resolve(); var ok = 0;
+      rows.forEach(function(row){
+        p = p.then(function(){
+          return supabase.from(table).upsert([row], { onConflict: 'id' }).then(function(rr){
+            if(!rr.error){ ok++; return; }
+            if(stripGoal && row.goal_id){
+              var clean = JSON.parse(JSON.stringify(row)); delete clean.goal_id;
+              return supabase.from(table).upsert([clean], { onConflict: 'id' }).then(function(rr2){
+                if(!rr2.error){ ok++; return; }
+                skipped.push((row.title || row.id) + ' :: ' + rr2.error.message);
+              });
+            }
+            skipped.push((row.title || row.id) + ' :: ' + rr.error.message);
+          });
+        });
+      });
+      return p.then(function(){ return { data: null, error: ok ? null : r.error }; });
+    });
+  }
+
   /* ---------- 全量 reconcile（本地 ⇄ 云端双向对齐） ----------
    * 覆盖：新增/修改（upsert）+ 删除（云端有本地无 → 删）+ 导入替换
    * habit_logs：RLS 无 UPDATE 策略 → 按习惯"删全量再重插"，避免冲突与重复 */
@@ -4104,15 +4140,15 @@ function bindCalendarEvents(c){
       })
       .then(function(delRs){
         for(var i=0;i<(delRs||[]).length;i++){ if(delRs[i] && delRs[i].error) throw new Error(delRs[i].error.message); }
+        var skipped = [];
         var p = Promise.resolve();
-        if(goals.length) p = p.then(function(){ return supabase.from('fd_goals').upsert(goals, { onConflict: 'id' }); });
-        if(tasks.length) p = p.then(function(){ return supabase.from('fd_tasks').upsert(tasks, { onConflict: 'id' }); });
-        if(habits.length) p = p.then(function(){ return supabase.from('fd_habits').upsert(habits, { onConflict: 'id' }); });
-        return p;
+        if(goals.length) p = p.then(function(){ return safeUpsert('fd_goals', goals, false, skipped); });
+        if(tasks.length) p = p.then(function(){ return safeUpsert('fd_tasks', tasks, true, skipped); });
+        if(habits.length) p = p.then(function(){ return safeUpsert('fd_habits', habits, false, skipped); });
+        return p.then(function(){ return skipped; });
       })
-      .then(function(rs){
-        for(var i=0;i<(rs||[]).length;i++){ if(rs[i] && rs[i].error) throw new Error(rs[i].error.message); }
-        if(!sysRec) return Promise.resolve();
+      .then(function(skipped){
+        if(!sysRec) return { skipped: skipped };
         var logs = hlogs.map(function(l){
           return { id: uid(), user_id: u, habit_id: l.habitId, log_date: l.date,
                    created_at: now, synced_at: now, completed_at: l.completedAt || null };
@@ -4124,10 +4160,11 @@ function bindCalendarEvents(c){
         Object.keys(habitIds).forEach(function(hid){
           p = p.then(function(){ return supabase.from('fd_habit_logs').delete().eq('user_id', u).eq('habit_id', hid); });
         });
-        return p.then(function(){ return supabase.from('fd_habit_logs').insert(logs); });
+        return p.then(function(){ return supabase.from('fd_habit_logs').insert(logs); })
+          .then(function(r2){ if(r2 && r2.error) throw new Error(r2.error.message); return { skipped: skipped }; });
       })
       .then(function(r){
-        if(r && r.error) throw new Error(r.error.message);
+        return r;
       })
       .then(function(){ _syncing = false; })
       .catch(function(e){ _syncing = false; throw e; });
@@ -4140,10 +4177,15 @@ function bindCalendarEvents(c){
     pushTimer = setTimeout(function(){
       pushTimer = null;
       setSync('syncing','同步中...');
-      pushAll().then(function(){ setSync('', '已同步'); })
+      pushAll().then(function(syncRes){
+          if(syncRes && syncRes.skipped && syncRes.skipped.length){
+            try { localStorage.setItem('wb_focusdesk_skipped', JSON.stringify(syncRes.skipped)); } catch(e){}
+            setSync('offline','已同步（跳过 ' + syncRes.skipped.length + ' 条问题记录，详情见控制台）');
+          } else { setSync('', '已同步'); }
+        })
         .catch(function(e){
           console.warn('[Cloud] push failed', e);
-          setSync('offline','同步失败，稍后重试');
+          setSync('offline','同步失败：' + (e && e.message ? e.message : '稍后重试'));
           schedulePush();
         });
     }, 300);

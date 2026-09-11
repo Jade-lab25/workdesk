@@ -68,8 +68,32 @@ async function syncTable<T extends { id: string; synced_at?: string | null; is_d
         .upsert(records, { onConflict: 'id' })
         .select();
 
-      if (error) throw error;
-      if (data) {
+      if (error) {
+        // ✅ 修复：整批失败 → 逐条尝试（跳过单条问题记录，避免一条坏数据阻断整表同步）
+        //    记录问题数据 id 到 localStorage，供诊断
+        console.warn(`[Sync] batch upsert failed on ${tableName}: ${error.message} → retrying one by one`);
+        const problemIds: string[] = [];
+        for (const rec of records) {
+          const recId = (rec as any).id;
+          const { data: d, error: e } = await supabase
+            .from(tableName)
+            .upsert([rec], { onConflict: 'id' })
+            .select();
+          if (e) {
+            problemIds.push(`${recId} :: ${e.message}`);
+            console.warn(`[Sync] skipped ${tableName} row ${recId}: ${e.message}`);
+          } else if (d) {
+            allSynced.push(...d);
+          }
+        }
+        if (problemIds.length) {
+          try {
+            const key = `wb_sync_problems_${tableName}`;
+            const prev = JSON.parse(localStorage.getItem(key) || '[]');
+            localStorage.setItem(key, JSON.stringify([...prev, ...problemIds].slice(-50)));
+          } catch {}
+        }
+      } else if (data) {
         allSynced.push(...data);
       }
     }
@@ -132,7 +156,29 @@ async function batchInsert<T extends { id: string }>(
         .select();
 
       if (error) {
-        throw error;
+        // ✅ 修复：整批插入失败 → 逐条尝试（跳过单条问题记录）
+        console.warn(`[Sync] batch insert failed on ${tableName}: ${error.message} → retrying one by one`);
+        const problemIds: string[] = [];
+        for (const rec of recordsToInsertPayload) {
+          const recId = (rec as any).id;
+          const { data: d, error: e } = await supabase
+            .from(tableName)
+            .insert([rec])
+            .select();
+          if (e) {
+            problemIds.push(`${recId} :: ${e.message}`);
+            console.warn(`[Sync] skipped ${tableName} row ${recId}: ${e.message}`);
+          } else if (d) {
+            allInserted.push(...d);
+          }
+        }
+        if (problemIds.length) {
+          try {
+            const key = `wb_sync_problems_${tableName}`;
+            const prev = JSON.parse(localStorage.getItem(key) || '[]');
+            localStorage.setItem(key, JSON.stringify([...prev, ...problemIds].slice(-50)));
+          } catch {}
+        }
       } else if (data) {
         allInserted.push(...data);
       }
