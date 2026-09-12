@@ -671,7 +671,7 @@ input:focus, textarea:focus { outline: none; }
     <div data-page-node-id="DL2PA2NNDH0zPJe7gRY7NQ" class="form-group">
       <label data-page-node-id="SL6cFMCUtLHnc40P9mqABj" class="form-label"><!--pnid:hSmxW1tkmOS10WxZKDPGAF-->网络代理（可选，默认留空直连）</label>
       <input data-page-node-id="1rlsOr3aPXmpvfGPv3nl6w" class="form-input" id="llmCorsProxy" placeholder="留空 = 浏览器直连（推荐）" type="text">
-      <div data-page-node-id="xh0Y74KpwrNRT4y9aYgDY8" class="setting-hint"><!--pnid:OeaComQdaovht1YOpNUtWk-->默认直连即可（已实测 DeepSeek/火山/智谱/通义/OpenAI 在本平台均支持浏览器直连）。仅当你所在网络直连失败时，才需填一个 CORS 中转地址（详见 ❓ 帮助 → 🤖 AI 连不上？按顺序排查）。</div>
+      <div data-page-node-id="xh0Y74KpwrNRT4y9aYgDY8" class="setting-hint"><!--pnid:OeaComQdaovht1YOpNUtWk-->DeepSeek/智谱/通义/OpenAI 支持浏览器直连；火山引擎 Agent Plan 因服务端 CORS 未放行鉴权头，需经项目内置的 Supabase 代理（首次使用请先部署 llm-proxy Edge Function，见 ❓ 帮助 → 🤖 AI 连不上？）。直连失败时也可填 CORS 中转地址。</div>
     </div>
 
     <div data-page-node-id="p1I4d57TQpJB1dIAEkKw7I" class="form-group" id="endpointGroup" style="display:none">
@@ -1205,7 +1205,8 @@ var LLM = (function () {
       endpoint: "https://ark.cn-beijing.volces.com/api/plan/v3/chat/completions",
       model: "ark-code-latest",
       models: ["ark-code-latest", "deepseek-v4-pro", "glm-5.1", "doubao-seed-2.0-pro", "doubao-1.5-pro-32k"],
-      hint: "需在方舟控制台订阅 Agent Plan 套餐"
+      hint: "需在方舟控制台订阅 Agent Plan 套餐",
+      proxy: true
     },
     openai: {
       label: "OpenAI",
@@ -1308,10 +1309,31 @@ var LLM = (function () {
       ? (proxy + (proxy.indexOf("?") >= 0 ? "&" : "?") + "url=" + encodeURIComponent(endpoint))
       : endpoint;
 
+    // 服务端代理：1) 用户自填 corsProxy；2) 标了 proxy 的服务商（如火山方舟 Agent Plan，
+    // 其 CORS 未放行鉴权头，浏览器无法直连）→ 走本项目的 Supabase Edge Function llm-proxy
+    var useSupabaseProxy = !proxy && prov.proxy
+      && typeof SUPABASE_URL === "string" && SUPABASE_URL.indexOf("__VITE") !== 0
+      && !!SUPABASE_ANON_KEY;
+    var proxyUrl = useSupabaseProxy
+      ? SUPABASE_URL.replace(/\/+$/, "") + "/functions/v1/llm-proxy"
+      : "";
+
     async function attempt() {
       var controller = new AbortController();
       var timer = setTimeout(function () { controller.abort(); }, timeout);
       try {
+        if (useSupabaseProxy) {
+          return await fetch(proxyUrl, {
+            method: "POST",
+            headers: {
+              "Content-Type": "application/json",
+              "apikey": SUPABASE_ANON_KEY,
+              "Authorization": "Bearer " + SUPABASE_ANON_KEY
+            },
+            body: JSON.stringify({ endpoint: endpoint, apiKey: apiKey, body: body }),
+            signal: controller.signal
+          });
+        }
         return await fetch(targetUrl, {
           method: "POST",
           headers: {
@@ -1333,7 +1355,9 @@ var LLM = (function () {
       if (e.name === "AbortError") {
         throw new Error("请求超时（" + (timeout / 1000) + "秒未响应），请检查网络或服务商状态");
       }
-      var hint = proxy
+      var hint = useSupabaseProxy
+        ? "（已通过 Supabase 代理转发。请确认已部署 llm-proxy Edge Function：Supabase → Edge Functions → Create → 名称 llm-proxy → 粘贴项目内 supabase/functions/llm-proxy/index.ts 代码 → Deploy；并确认 Supabase 项目状态正常）"
+        : proxy
         ? "（当前走代理 " + proxy + "，请检查代理地址/服务是否正常；也可清空代理改回直连）"
         : "（直连失败。本平台默认支持直连 LLM API——请先确认 API Key、服务商、模型名是否正确；若你所在网络屏蔽了该服务商，可在设置里填一个网络代理中转，详见 ❓ 帮助）";
       throw new Error("网络请求失败：" + (e.message || e) + " " + hint);
