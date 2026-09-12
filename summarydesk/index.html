@@ -1191,7 +1191,7 @@ var Store = (function () {
  * 架构参考你提供的 llm.js，精简为 summary-desk 需要的功能
  * ===================================================================== */
 var LLM = (function () {
-  var DEFAULT_TIMEOUT = 60000;
+  var DEFAULT_TIMEOUT = 120000; // 生成类请求给 120s（Agent Plan 的 Auto 调度可能走到深度思考模型，周报长任务较慢）；测试连接单独用 20s
 
   // Supabase 配置（构建时由 scripts/assemble.js 注入真实值；本地直开时保留占位符）
   // 注意：WB_Cloud 模块里的同名变量在它自己的 IIFE 闭包内，这里访问不到，必须独立声明
