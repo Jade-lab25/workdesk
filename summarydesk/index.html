@@ -1193,6 +1193,11 @@ var Store = (function () {
 var LLM = (function () {
   var DEFAULT_TIMEOUT = 60000;
 
+  // Supabase 配置（构建时由 scripts/assemble.js 注入真实值；本地直开时保留占位符）
+  // 注意：WB_Cloud 模块里的同名变量在它自己的 IIFE 闭包内，这里访问不到，必须独立声明
+  var SB_URL = '__VITE_SUPABASE_URL__';
+  var SB_ANON_KEY = '__VITE_SUPABASE_ANON_KEY__';
+
   var PROVIDERS = {
     deepseek: {
       label: "DeepSeek",
@@ -1312,10 +1317,10 @@ var LLM = (function () {
     // 服务端代理：1) 用户自填 corsProxy；2) 标了 proxy 的服务商（如火山方舟 Agent Plan，
     // 其 CORS 未放行鉴权头，浏览器无法直连）→ 走本项目的 Supabase Edge Function llm-proxy
     var useSupabaseProxy = !proxy && prov.proxy
-      && typeof SUPABASE_URL === "string" && SUPABASE_URL.indexOf("__VITE") !== 0
-      && !!SUPABASE_ANON_KEY;
+      && SB_URL.indexOf("__VITE") !== 0
+      && SB_ANON_KEY.indexOf("__VITE") !== 0;
     var proxyUrl = useSupabaseProxy
-      ? SUPABASE_URL.replace(/\/+$/, "") + "/functions/v1/llm-proxy"
+      ? SB_URL.replace(/\/+$/, "") + "/functions/v1/llm-proxy"
       : "";
 
     async function attempt() {
@@ -1327,8 +1332,8 @@ var LLM = (function () {
             method: "POST",
             headers: {
               "Content-Type": "application/json",
-              "apikey": SUPABASE_ANON_KEY,
-              "Authorization": "Bearer " + SUPABASE_ANON_KEY
+              "apikey": SB_ANON_KEY,
+              "Authorization": "Bearer " + SB_ANON_KEY
             },
             body: JSON.stringify({ endpoint: endpoint, apiKey: apiKey, body: body }),
             signal: controller.signal
