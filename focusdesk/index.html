@@ -2451,6 +2451,7 @@ function bindArchiveEvents(c){
       var r = State.records.find(function(x){return x.id===id;});
       if(!r) return;
       r.status = ST_DONE; r.completedAt = nowISO(); r.archivedAt = '';
+      r.updatedAt = nowISO(); // 刷新时间戳，让墓碑裁决判定"恢复赢"
       // 恢复即取消该记录的删除标记，防止合并逻辑将其丢弃
       try {
         var dm = JSON.parse(localStorage.getItem(STORAGE_DEL_KEY) || '{}');
@@ -3355,9 +3356,9 @@ function init(){
         db = WB_Cloud.db;
         State.online = true;
         setSync('syncing','同步中...');
-        WB_Cloud.fetchAll().then(function(records){
+        WB_Cloud.fetchAll().then(function(res){
           // 合并：云端优先，本地独有记录保留（稍后由 reconcile 补推上云）
-          mergeCloudRecords(records);
+          mergeCloudRecords(res.records, res.tombstones);
           return WB_Cloud.pushAll().then(function(syncRes){
           State.loaded = true;
           autoArchiveOldDone();
@@ -3384,8 +3385,8 @@ function init(){
           // 多端一致：每 30 秒拉取云端变化并合并 + 页面重新可见时立即同步
           var autoSync = function(){
             if(!window.WB_Cloud || !WB_Cloud.enabled || !WB_Cloud.isCloud() || WB_Cloud.syncing()) return;
-            WB_Cloud.fetchAll().then(function(recs){
-              mergeCloudRecords(recs);
+            WB_Cloud.fetchAll().then(function(res){
+              mergeCloudRecords(res.records, res.tombstones);
               WB_Cloud.pushAll().then(function(syncRes){
                 if(syncRes && syncRes.skipped && syncRes.skipped.length){
                   try { localStorage.setItem('wb_focusdesk_skipped', JSON.stringify(syncRes.skipped)); } catch(e){}
@@ -3418,12 +3419,19 @@ function init(){
 /* 轻量路径：云端拉取的记录与本地合并（updatedAt 较新者优先；本地独有保留待上推）
  * 修复：之前是"云端优先"，导入/本地修改后若云端 id 相同，会被旧的云端版本覆盖，
  *       导致刚导入的内容被拉取"清空"。改为按时间戳取最新版本。 */
-function mergeCloudRecords(cloudRecs){
+function mergeCloudRecords(cloudRecs, cloudDels){
   // 多端安全：本地残留记录若已被显式删除（删除标记），不参与合并（防止复活后再被推送回云端）
   var delMap = {};
   try { delMap = JSON.parse(localStorage.getItem(STORAGE_DEL_KEY) || '{}'); } catch(e){}
   var now2 = Date.now();
   Object.keys(delMap).forEach(function(did){ if(delMap[did].ts && now2 - delMap[did].ts > 30*24*3600*1000) delete delMap[did]; });
+  // 云端共享墓碑并入本地（其他浏览器删的记录，本机也必须知道，否则会把它推回去造成"诈尸"）
+  (cloudDels || []).forEach(function(tb){
+    if(!tb || !tb.id || !tb.table_name) return;
+    var ts = tb.deleted_at ? new Date(tb.deleted_at).getTime() : now2;
+    if(isNaN(ts)) ts = now2;
+    if(!delMap[tb.id] || (delMap[tb.id].ts || 0) < ts) delMap[tb.id] = { table: tb.table_name, ts: ts };
+  });
   try { localStorage.setItem(STORAGE_DEL_KEY, JSON.stringify(delMap)); } catch(e){}
 
   // 取记录的最后更新时间（兼容多个字段，没有则按 0 算）
@@ -3456,9 +3464,10 @@ function mergeCloudRecords(cloudRecs){
       merged.push(lr);
     }
   });
-  // 再补云端有但本地没有的（其他设备新增的）
+  // 再补云端有但本地没有的（其他设备新增的）；墓碑里的不补
   (cloudRecs || []).forEach(function(cr){
     if(!cr || !cr.id || added[cr.id]) return;
+    if(delMap[cr.id]) return; // 已被任一端删除，跳过
     merged.push(cr);
   });
 
@@ -4087,12 +4096,16 @@ function bindCalendarEvents(c){
 
   /* ---------- 拉取云端 → 本地格式 ---------- */
   function fetchAll(){
-    if(!currentUser) return Promise.resolve([]);
+    if(!currentUser) return Promise.resolve({ records: [], tombstones: [] });
     var u = currentUser.id;
     var q = function(t){ return supabase.from(t).select('*').eq('user_id', u); };
-    return Promise.all([q('fd_goals'), q('fd_tasks'), q('fd_habits'), q('fd_habit_logs')])
+    // 墓碑表可能尚未建（SQL 未执行）：单独软失败，不影响主数据同步
+    var tq = Promise.resolve(supabase.from('fd_tombstones')
+      .select('id,table_name,deleted_at').eq('user_id', u))
+      .then(function(r){ return r; }, function(){ return { data: [] }; });
+    return Promise.all([q('fd_goals'), q('fd_tasks'), q('fd_habits'), q('fd_habit_logs'), tq])
       .then(function(rs){
-        for(var i=0;i<rs.length;i++){ if(rs[i].error) throw new Error(rs[i].error.message); }
+        for(var i=0;i<4;i++){ if(rs[i].error) throw new Error(rs[i].error.message); }
         var goals = rs[0].data || [], tasks = rs[1].data || [], habits = rs[2].data || [], hlogs = rs[3].data || [];
         var goalById = {}; goals.forEach(function(g){ goalById[g.id] = g; });
         var recs = [];
@@ -4107,7 +4120,7 @@ function bindCalendarEvents(c){
             createdAt: nowISO(), order: 0
           });
         }
-        return recs;
+        return { records: recs, tombstones: (rs[4] && rs[4].data) || [] };
       });
   }
 
@@ -4172,6 +4185,17 @@ function bindCalendarEvents(c){
     // 多端安全：云端删除只针对用户显式删除的记录（删除标记），不再「云端有本地无就删」，避免多个浏览器互相清数据
     var delMap = {};
     try { delMap = JSON.parse(localStorage.getItem(STORAGE_DEL_KEY) || '{}'); } catch(e){}
+    // 本地墓碑同步清理 30 天前的（与 mergeCloudRecords 保持一致）
+    Object.keys(delMap).forEach(function(did){
+      if(delMap[did].ts && Date.now() - delMap[did].ts > 30*24*3600*1000) delete delMap[did];
+    });
+    try { localStorage.setItem(STORAGE_DEL_KEY, JSON.stringify(delMap)); } catch(e){}
+    function recTick(r){
+      if(!r) return 0;
+      var t = r.updatedAt || r.updated_at || r.completedAt || r.completed_at || r.createdAt || r.created_at;
+      if(!t) return 0;
+      var d = new Date(t); return isNaN(d.getTime()) ? 0 : d.getTime();
+    }
     var goalDelIds = [], taskDelIds = [], habitDelIds = [];
     Object.keys(delMap).forEach(function(did){
       var d = delMap[did];
@@ -4180,7 +4204,12 @@ function bindCalendarEvents(c){
       else if(d.table === 'fd_tasks') taskDelIds.push(did);
       else if(d.table === 'fd_habits') habitDelIds.push(did);
     });
-    return Promise.all([sel('fd_goals','id,user_id'), sel('fd_tasks','id,user_id'), sel('fd_habits','id,user_id')])
+    // 云端墓碑（软失败：表还没建时退化为旧行为，不阻断同步）
+    var tq = Promise.resolve(supabase.from('fd_tombstones')
+      .select('id,table_name,deleted_at').eq('user_id', u))
+      .then(function(r){ return r; }, function(){ return { data: [], error: { message: 'tombstone unavailable' } }; });
+    var needRender = false;
+    return Promise.all([sel('fd_goals','id,user_id'), sel('fd_tasks','id,user_id'), sel('fd_habits','id,user_id'), tq])
       .then(function(rs){
         var dels = [];
         goalDelIds.forEach(function(did){ dels.push(supabase.from('fd_goals').delete().eq('id', did)); });
@@ -4189,7 +4218,73 @@ function bindCalendarEvents(c){
           dels.push(supabase.from('fd_habit_logs').delete().eq('user_id', u).in('habit_id', habitDelIds));
           dels.push(supabase.from('fd_habits').delete().eq('user_id', u).in('id', habitDelIds));
         }
-        return Promise.all(dels);
+        // 云端墓碑裁决：本机不知道的删除标记，按时间戳比"本地记录 vs 删除时间"
+        var tbOK = !(rs[3] && rs[3].error);
+        var cloudTB = tbOK ? (rs[3].data || []) : [];
+        var tbRestore = []; // 恢复赢：删掉云端墓碑
+        cloudTB.forEach(function(tb){
+          if(!tb || !tb.id || delMap[tb.id]) return;
+          var tDel = tb.deleted_at ? new Date(tb.deleted_at).getTime() : 0;
+          if(isNaN(tDel)) tDel = 0;
+          if(tb.table_name === 'fd_habits'){
+            // 习惯无恢复入口：删除总是赢
+            if(sysRec && (sysRec.habits || []).some(function(h){ return h.id === tb.id; })){
+              habitDelIds.push(tb.id);
+              dels.push(supabase.from('fd_habit_logs').delete().eq('user_id', u).eq('habit_id', tb.id));
+              dels.push(supabase.from('fd_habits').delete().eq('user_id', u).eq('id', tb.id));
+              sysRec.habits = sysRec.habits.filter(function(h){ return h.id !== tb.id; });
+              sysRec.habitLogs = (sysRec.habitLogs || []).filter(function(l){ return l.habitId !== tb.id; });
+              habits = habits.filter(function(h){ return h.id !== tb.id; });
+              hlogs = sysRec.habitLogs || [];
+              needRender = true;
+            }
+            return;
+          }
+          var local = null;
+          for(var i=0;i<State.records.length;i++){ if(State.records[i].id === tb.id){ local = State.records[i]; break; } }
+          if(local && recTick(local) > tDel){
+            // 本地更新（如归档恢复）→ 恢复赢：删墓碑，记录照常 upsert
+            tbRestore.push(tb);
+            dels.push(supabase.from('fd_tombstones').delete()
+              .eq('user_id', u).eq('table_name', tb.table_name).eq('id', tb.id));
+          } else if(local){
+            // 删除赢：本地剔除 + 确保云端行删除（防其他端刚把它推回来）
+            if(tb.table_name === 'fd_goals'){ goalDelIds.push(tb.id); dels.push(supabase.from('fd_goals').delete().eq('id', tb.id)); goals = goals.filter(function(r){ return r.id !== tb.id; }); }
+            else { taskDelIds.push(tb.id); dels.push(supabase.from('fd_tasks').delete().eq('id', tb.id)); tasks = tasks.filter(function(r){ return r.id !== tb.id; }); }
+            State.records = State.records.filter(function(r){ return r.id !== tb.id; });
+            needRender = true;
+          }
+          // 本地没有这条记录：保留墓碑，什么都不做
+        });
+        if(needRender){
+          try { if(sysRec) { State.habits = sysRec.habits || []; State.habitLogs = sysRec.habitLogs || []; } saveLocal(); } catch(e){}
+        }
+        return Promise.all(dels).then(function(delRs){ return { delRs: delRs, tbOK: tbOK, tbRestore: tbRestore }; });
+      })
+      .then(function(res){
+        var delRs = res.delRs || [];
+        for(var i=0;i<delRs.length;i++){ if(delRs[i] && delRs[i].error) throw new Error(delRs[i].error.message); }
+        // 本地墓碑上云（删除标记跨设备共享）+ 清理 30 天前旧墓碑；软失败不阻断主流程
+        if(res.tbOK){
+          var tbRows = Object.keys(delMap).map(function(id){
+            var d = delMap[id];
+            if(!d || !d.table) return null;
+            return { id: id, user_id: u, table_name: d.table,
+                     deleted_at: new Date(d.ts || Date.now()).toISOString() };
+          }).filter(Boolean);
+          var tbChain = Promise.resolve();
+          if(tbRows.length){
+            tbChain = tbChain.then(function(){
+              return supabase.from('fd_tombstones').upsert(tbRows, { onConflict: 'user_id,table_name,id' });
+            }).then(function(r){ if(r && r.error) console.warn('[Cloud] tombstone upsert: ' + r.error.message); });
+          }
+          tbChain = tbChain.then(function(){
+            return supabase.from('fd_tombstones').delete().eq('user_id', u)
+              .lt('deleted_at', new Date(Date.now() - 30*24*3600*1000).toISOString());
+          }).then(function(r){ if(r && r.error) console.warn('[Cloud] tombstone prune: ' + r.error.message); });
+          return tbChain.then(function(){ return delRs; });
+        }
+        return delRs;
       })
       .then(function(delRs){
         for(var i=0;i<(delRs||[]).length;i++){ if(delRs[i] && delRs[i].error) throw new Error(delRs[i].error.message); }
@@ -4217,6 +4312,8 @@ function bindCalendarEvents(c){
           .then(function(r2){ if(r2 && r2.error) throw new Error(r2.error.message); return { skipped: skipped }; });
       })
       .then(function(r){
+        // 云端墓碑导致本地记录被剔除时，刷新界面（其他设备的删除在本机即时生效）
+        if(needRender && typeof renderAll === 'function'){ try { renderAll(); } catch(e){} }
         return r;
       })
       .then(function(){ _syncing = false; })
