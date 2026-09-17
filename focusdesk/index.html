@@ -1401,6 +1401,45 @@ function dedupeRecurringInstances(){
   try { localStorage.setItem('wb_focusdesk_rpt_dedupe_v1','1'); } catch(e){}
 }
 
+// 迁移 v2：修正 v1 的次生 bug——v1 在"模板本身还在未来"时把下一期也写进了墓碑，
+// 导致完成模板后引擎连续跨过墓碑，生成跳到几个月之后的那期。
+// 做法：清掉所有 rpt: 墓碑；每个系列以"已完成/已逾期/模板"的最大期数为锚点，
+// 锚点的下一期允许存在，更后面的未来实例本机删除、写新墓碑、云端物理删除。
+function repairRecurringV2(){
+  try { if(localStorage.getItem('wb_focusdesk_rpt_dedupe_v2')==='1') return; } catch(e){ return; }
+  var delMap = readDelMap();
+  Object.keys(delMap).forEach(function(k){ if(k.indexOf('rpt:')===0) delete delMap[k]; });
+  var baseSeq = {};
+  State.records.forEach(function(r){
+    if(r.type!==TYPE_TASK || !r.seriesId) return;
+    var isAuto = (''+r.id).indexOf('rpt:')===0;
+    var isDue = !r.dueDate || r.dueDate <= todayISO();
+    if(!isAuto || r.status===ST_DONE || isDue){
+      var seq = r.seriesSeq||0;
+      if(!(r.seriesId in baseSeq) || seq > baseSeq[r.seriesId]) baseSeq[r.seriesId] = seq;
+    }
+  });
+  var junkIds = [];
+  State.records = State.records.filter(function(r){
+    if(r.type!==TYPE_TASK || !r.seriesId) return true;
+    var isAuto = (''+r.id).indexOf('rpt:')===0;
+    if(!isAuto || r.status===ST_DONE) return true;
+    var bs = (r.seriesId in baseSeq) ? baseSeq[r.seriesId] : -1;
+    if((r.seriesSeq||0) > bs+1 && r.dueDate && r.dueDate > todayISO()){
+      junkIds.push(r.id);
+      delMap[r.id] = { table: 'fd_tasks', ts: Date.now() };
+      return false;
+    }
+    return true;
+  });
+  try { localStorage.setItem(STORAGE_DEL_KEY, JSON.stringify(delMap)); } catch(e){}
+  if(junkIds.length) saveLocal();
+  if(window.WB_Cloud && WB_Cloud.enabled && WB_Cloud.isCloud && WB_Cloud.isCloud()){
+    WB_Cloud.purgeCloudRecurring(junkIds).catch(function(){});
+  }
+  try { localStorage.setItem('wb_focusdesk_rpt_dedupe_v2','1'); } catch(e){}
+}
+
 // 修改规则/截止日或改为"不重复"时，清理同系列已生成的未来实例（历史已完成保留）
 function removeFutureInstances(seriesId, keepId, fromDue){
   var delMap = readDelMap(), changed = false;
@@ -3368,8 +3407,9 @@ function renderView(){
   else if(State.currentView==='archive') renderArchive();
 }
 function renderAll(){
-  dedupeRecurringInstances(); // 一次性：清理旧版预生成 bug 造成的重复未来实例
-  ensureRecurringInstances(); // 重复任务兜底：完成/过期/跨设备时自动补齐下一期
+  repairRecurringV2();         // 一次性：修正 v1 清理误伤下一期墓碑（完成后跳期问题）
+  dedupeRecurringInstances();  // 一次性：清理旧版预生成 bug 造成的重复未来实例
+  ensureRecurringInstances();  // 重复任务兜底：完成/过期/跨设备时自动补齐下一期
   updateBadges(); updateTopbarStats(); renderView();
 }
 // 顶部常驻「今日已完成 X · 还有 Y 项未完成」；口径与「范围内已完成」一致
@@ -4510,8 +4550,22 @@ function bindCalendarEvents(c){
   }
 
   /* ---------- 对外接口 ---------- */
+  // 重复任务迁移 v2：物理删除云端所有 rpt: 墓碑 + 指定的多余未来实例行
+  function purgeCloudRecurring(junkIds){
+    if(!currentUser || !supabase) return Promise.resolve();
+    var u = currentUser.id;
+    var jobs = [ supabase.from('fd_tombstones').delete().eq('user_id', u).like('id', 'rpt:%') ];
+    if(junkIds && junkIds.length){
+      for(var i=0;i<junkIds.length;i+=100){
+        jobs.push(supabase.from('fd_tasks').delete().eq('user_id', u).in('id', junkIds.slice(i, i+100)));
+      }
+    }
+    return Promise.all(jobs).catch(function(e){ console.warn('purge recurring failed', e); });
+  }
+
   window.WB_Cloud = {
     enabled: ENABLED,
+    purgeCloudRecurring: purgeCloudRecurring,
     init: function(onReady){
       authedCallbacks.push(onReady);
       if(!ENABLED){ onReady(null); return; }
