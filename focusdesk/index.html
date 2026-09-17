@@ -1311,150 +1311,87 @@ function readDelMap(){
   try { return JSON.parse(localStorage.getItem(STORAGE_DEL_KEY) || '{}'); } catch(e){ return {}; }
 }
 
-// 扫描所有系列，保证"最新一期"总是未到期的未来实例（完成当期 / 当期过期 / 断网补跑都会触发）
-// 返回本次新建的实例列表
-function ensureRecurringInstances(){
-  var created = [];
-  var delMap = readDelMap();
-  var series = {};
-  State.records.forEach(function(r){
-    if(r.type===TYPE_TASK && r.recRule && r.seriesId) (series[r.seriesId] = series[r.seriesId]||[]).push(r);
-  });
-  Object.keys(series).forEach(function(sid){
-    var list = series[sid];
-    var anchor = list[0];
-    list.forEach(function(r){ if((r.seriesSeq||0) > (anchor.seriesSeq||0)) anchor = r; });
-    var guard = 0;
-    // 推进一步：按 anchor 生成/跳过/接续下一期；返回 'created' | 'skipped'(墓碑) | 'exists'
-    var step = function(){
-      var nextSeq = (anchor.seriesSeq||0) + 1;
-      var nextDue = advanceDue(anchor.dueDate, anchor.recRule);
-      var nextId = recurringInstanceId(sid, nextSeq);
-      var base = {
-        id: nextId, title: anchor.title, type: TYPE_TASK, status: ST_TODO,
-        priority: anchor.priority||'', owner: anchor.owner||'', tags: anchor.tags||'',
-        note: anchor.note||'', goal: anchor.goal||'', subtasks: [],
-        dueDate: nextDue, recRule: anchor.recRule, seriesId: sid, seriesSeq: nextSeq,
-        createdAt: nowISO(), updatedAt: nowISO(), completedAt: '',
-        order: (typeof anchor.order==='number'?anchor.order:Date.now()) + nextSeq
-      };
-      for(var i=0;i<State.records.length;i++){
-        if(State.records[i].id===nextId){ anchor = State.records[i]; return 'exists'; }
-      }
-      // 这一期被用户显式删除（"这期不用做"）：不复活，但用虚拟锚点继续推演后续期数
-      anchor = base;
-      if(delMap[nextId]) return 'skipped';
-      State.records.push(base);
-      created.push(base);
-      return 'created';
-    };
-    // 单循环：锚点是"真实存在、未完成、截止日在未来"的一期 → 链条健康，立即停止
-    // （否则每次刷新都会无条件再造一期 = 重复灾难）；完成/过期才补，墓碑期虚拟跨过
-    var virtual = false;
-    while(guard++ < 12 && anchor.dueDate && anchor.recRule){
-      if(!virtual && anchor.status!==ST_DONE && anchor.dueDate > todayISO()) break;
-      virtual = (step() === 'skipped');
-    }
-  });
-  if(created.length){
-    saveLocal();
-    if(window.WB_Cloud && WB_Cloud.enabled && WB_Cloud.isCloud && WB_Cloud.isCloud()){
-      WB_Cloud.pushAll().catch(function(){});
-    }
-  }
-  return created;
+// rpt: 开头的 ID = 重复任务自动生成的"实例"，其余记录是用户手建的"模板"（系列第 0 期）
+function isRptId(id){ return (''+id).indexOf('rpt:')===0; }
+// 模板上的"跳过期"名单：用户删掉某一期（这期不用做），期号记这里，随模板行正常同步
+function readRecSkip(tpl){
+  try { var a = JSON.parse(tpl.recSkip||'[]'); return Array.isArray(a) ? a : []; } catch(e){ return []; }
 }
 
-// 一次性清理旧版"阶段2无脑预生成"造成的重复未来实例：
-// 每个系列只留最早的一条"未完成且截止日在未来"的实例，其余写墓碑删除（云端同步删）
-function dedupeRecurringInstances(){
-  try {
-    if(localStorage.getItem('wb_focusdesk_rpt_dedupe_v1')==='1') return;
-  } catch(e){ return; }
-  var delMap = readDelMap();
-  var series = {};
-  State.records.forEach(function(r){
-    if(r.type===TYPE_TASK && r.recRule && r.seriesId) (series[r.seriesId] = series[r.seriesId]||[]).push(r);
-  });
-  var junkIds = {};
-  Object.keys(series).forEach(function(sid){
-    var list = series[sid].slice().sort(function(a,b){ return (a.seriesSeq||0)-(b.seriesSeq||0); });
-    var keeperFound = false, changed = false;
-    list.forEach(function(r){
-      var isFutureTodo = r.status!==ST_DONE && r.dueDate && r.dueDate > todayISO();
-      if(!isFutureTodo) return;
-      if(!keeperFound){ keeperFound = true; return; }
-      junkIds[r.id] = true;
-      delMap[r.id] = { table: 'fd_tasks', ts: Date.now() };
-      changed = true;
-    });
-    if(changed) try { localStorage.setItem(STORAGE_DEL_KEY, JSON.stringify(delMap)); } catch(e){}
-  });
-  var n = Object.keys(junkIds).length;
-  if(n){
-    State.records = State.records.filter(function(r){ return !junkIds[r.id]; });
-    saveLocal();
-    if(window.WB_Cloud && WB_Cloud.enabled && WB_Cloud.isCloud && WB_Cloud.isCloud()){
-      WB_Cloud.pushAll().catch(function(){});
-    }
-  }
-  try { localStorage.setItem('wb_focusdesk_rpt_dedupe_v1','1'); } catch(e){}
-}
-
-// 迁移 v2：修正 v1 的次生 bug——v1 在"模板本身还在未来"时把下一期也写进了墓碑，
-// 导致完成模板后引擎连续跨过墓碑，生成跳到几个月之后的那期。
-// 做法：清掉所有 rpt: 墓碑；每个系列以"已完成/已逾期/模板"的最大期数为锚点，
-// 锚点的下一期允许存在，更后面的未来实例本机删除、写新墓碑、云端物理删除。
-function repairRecurringV2(){
-  try { if(localStorage.getItem('wb_focusdesk_rpt_dedupe_v2')==='1') return; } catch(e){ return; }
-  var delMap = readDelMap();
-  Object.keys(delMap).forEach(function(k){ if(k.indexOf('rpt:')===0) delete delMap[k]; });
-  var baseSeq = {};
+/* 声明式对账（每次渲染都跑，天然幂等，多端结果一致）：
+   模板（截止日 + 重复规则 + 跳过名单）是唯一事实源，每期渲染都重新算一遍"应存在集合"——
+   1) 所有已过期且未跳过的期：应存在（漏交的费用继续挂逾期，不会被悄悄跳过）
+   2) 第一个未跳过的未来期：应存在（永远只预排一期，日历不拥挤）
+   然后：缺的建、多的未完成实例物理删、已完成的历史永远不动。
+   模板被删 / 改成不重复 / 改规则 / 改截止日 / 旧版本残留的重复行，全部在这一步自动收敛，
+   不再需要一次性迁移脚本。
+   注意：实例"存不存在"只由本对账决定，rpt: 墓碑一律不参与抑制判断
+   （墓碑只作为"删除云端行"的一次性指令，修掉跨设备墓碑中毒后连环跳期的问题）。*/
+function reconcileRecurring(){
+  var today = todayISO();
+  var groups = {};
   State.records.forEach(function(r){
     if(r.type!==TYPE_TASK || !r.seriesId) return;
-    var isAuto = (''+r.id).indexOf('rpt:')===0;
-    var isDue = !r.dueDate || r.dueDate <= todayISO();
-    if(!isAuto || r.status===ST_DONE || isDue){
-      var seq = r.seriesSeq||0;
-      if(!(r.seriesId in baseSeq) || seq > baseSeq[r.seriesId]) baseSeq[r.seriesId] = seq;
-    }
+    var g = groups[r.seriesId] || (groups[r.seriesId] = { tpl:null, inst:[] });
+    if(isRptId(r.id)) g.inst.push(r);
+    else if(!g.tpl || (r.seriesSeq||0) < (g.tpl.seriesSeq||0)) g.tpl = r;
   });
-  var junkIds = [];
-  State.records = State.records.filter(function(r){
-    if(r.type!==TYPE_TASK || !r.seriesId) return true;
-    var isAuto = (''+r.id).indexOf('rpt:')===0;
-    if(!isAuto || r.status===ST_DONE) return true;
-    var bs = (r.seriesId in baseSeq) ? baseSeq[r.seriesId] : -1;
-    if((r.seriesSeq||0) > bs+1 && r.dueDate && r.dueDate > todayISO()){
-      junkIds.push(r.id);
-      delMap[r.id] = { table: 'fd_tasks', ts: Date.now() };
-      return false;
+  var pruneIds = [], created = 0, touched = false;
+  Object.keys(groups).forEach(function(sid){
+    var g = groups[sid];
+    var expected = {}; // seq -> dueDate
+    if(g.tpl && g.tpl.recRule && REC_RULES[g.tpl.recRule] && g.tpl.dueDate){
+      var skip = {};
+      readRecSkip(g.tpl).forEach(function(s){ skip[+s] = 1; });
+      var seq = 1, due = g.tpl.dueDate, guard = 0;
+      while(guard++ < 40){
+        due = advanceDue(due, g.tpl.recRule);
+        if(!skip[seq]){
+          expected[seq] = due;
+          if(due > today) break; // 只预排最近一个未来期
+        }
+        seq++;
+      }
     }
-    return true;
+    var existBySeq = {};
+    g.inst.forEach(function(r){ existBySeq[r.seriesSeq||0] = r; });
+    // 缺的建（确定性 ID：同系列同期，任何设备算出同一个 ID，upsert 天然去重）
+    if(g.tpl){
+      Object.keys(expected).forEach(function(k){
+        var s = +k, old = existBySeq[s];
+        if(old){
+          // 应存在但日期对不上（模板改过截止日/规则）：未完成的就把日期校正过来
+          if(old.status!==ST_DONE && old.dueDate!==expected[s]){
+            old.dueDate = expected[s]; old.updatedAt = nowISO(); touched = true;
+          }
+          return;
+        }
+        var tpl = g.tpl;
+        State.records.push({
+          id: recurringInstanceId(sid, s), title: tpl.title, type: TYPE_TASK, status: ST_TODO,
+          priority: tpl.priority||'', owner: tpl.owner||'', tags: tpl.tags||'',
+          note: tpl.note||'', goal: tpl.goal||'', subtasks: [],
+          dueDate: expected[s], recRule: tpl.recRule, seriesId: sid, seriesSeq: s,
+          createdAt: nowISO(), updatedAt: nowISO(), completedAt: '',
+          order: (typeof tpl.order==='number'?tpl.order:Date.now()) + s
+        });
+        created++;
+      });
+    }
+    // 多的未完成实例 → 物理删（模板没了/规则关了/被跳过/旧版重复数据）
+    g.inst.forEach(function(r){
+      if(r.status!==ST_DONE && !(r.seriesSeq in expected)) pruneIds.push(r.id);
+    });
   });
-  try { localStorage.setItem(STORAGE_DEL_KEY, JSON.stringify(delMap)); } catch(e){}
-  if(junkIds.length) saveLocal();
-  if(window.WB_Cloud && WB_Cloud.enabled && WB_Cloud.isCloud && WB_Cloud.isCloud()){
-    WB_Cloud.purgeCloudRecurring(junkIds).catch(function(){});
+  if(pruneIds.length){
+    var delMap = readDelMap(), dChanged = false;
+    pruneIds.forEach(function(id){
+      if(!delMap[id]){ delMap[id] = { table:'fd_tasks', ts: Date.now() }; dChanged = true; }
+    });
+    if(dChanged){ try { localStorage.setItem(STORAGE_DEL_KEY, JSON.stringify(delMap)); } catch(e){} }
+    State.records = State.records.filter(function(r){ return pruneIds.indexOf(r.id) < 0; });
   }
-  try { localStorage.setItem('wb_focusdesk_rpt_dedupe_v2','1'); } catch(e){}
-}
-
-// 修改规则/截止日或改为"不重复"时，清理同系列已生成的未来实例（历史已完成保留）
-function removeFutureInstances(seriesId, keepId, fromDue){
-  var delMap = readDelMap(), changed = false;
-  State.records = State.records.filter(function(r){
-    if(r.seriesId!==seriesId || r.id===keepId) return true;
-    if(r.status===ST_DONE) return true;
-    if(r.dueDate && r.dueDate >= fromDue){
-      delMap[r.id] = { table: 'fd_tasks', ts: Date.now() };
-      changed = true;
-      return false;
-    }
-    return true;
-  });
-  if(changed){
-    try { localStorage.setItem(STORAGE_DEL_KEY, JSON.stringify(delMap)); } catch(e){}
+  if(pruneIds.length || created || touched){
     saveLocal();
     if(window.WB_Cloud && WB_Cloud.enabled && WB_Cloud.isCloud && WB_Cloud.isCloud()){
       WB_Cloud.pushAll().catch(function(){});
@@ -1490,6 +1427,17 @@ function updateRecord(rec){
 
 function deleteRecord(id){
   var delRec = State.records.find(function(r){return r.id===id;});
+  // 重复任务的某一期：期号写进模板的跳过名单（跨端同步），不立普通删除墓碑。
+  // 之后由 reconcile 把它物理清掉并推演"再下一期"，其他设备靠模板上的名单自行收敛。
+  if(delRec && isRptId(id) && delRec.seriesId){
+    var tpl = State.records.find(function(r){
+      return r.type===TYPE_TASK && r.seriesId===delRec.seriesId && !isRptId(r.id);
+    });
+    if(tpl){
+      var skip = readRecSkip(tpl), seq = delRec.seriesSeq||0;
+      if(skip.indexOf(seq)<0){ skip.push(seq); tpl.recSkip = JSON.stringify(skip); tpl.updatedAt = nowISO(); }
+    }
+  }
   State.records = State.records.filter(function(r){return r.id!==id;});
   // 多端安全：记录删除标记（含所属表），云端删除只针对显式标记，避免其他浏览器误删/复活
   if(delRec && delRec.id){
@@ -3106,7 +3054,8 @@ function renderEditorBody(){
   body += '<div class="form-row"><label>归属</label><select id="efOwner">'+ownerOpts+'</select></div></div>';
   body += '<div class="form-row-2"><div class="form-row"><label>截止日期</label><input type="date" id="efDue" value="'+(r.dueDate||'')+'"></div>';
   body += '<div class="form-row"><label>关联目标</label><select id="efGoal">'+goalOpts+'</select></div></div>';
-  if(r.type===TYPE_TASK){
+  // 重复规则只能在模板（系列第 0 期）上改；自动生成的实例不显示此选择器
+  if(r.type===TYPE_TASK && !isRptId(r.id)){
     var repeatOpts = [['','不重复'],['daily','每天'],['weekly','每周'],['monthly','每月'],['yearly','每年']].map(function(o){
       return '<option value="'+o[0]+'" '+(r.recRule===o[0]?'selected':'')+'>'+o[1]+'</option>';
     }).join('');
@@ -3167,10 +3116,6 @@ function bindEditorEvents(){
 
 function saveEditor(){
   var r = EditorState.rec;
-  // 改前快照：用于判断重复规则/截止日是否变化（变化要清理旧的未来实例）
-  var old = EditorState.isNew ? null : State.records.find(function(x){return x.id===r.id;});
-  var oldRule = old ? (old.recRule||'') : '';
-  var oldDue = old ? (old.dueDate||'') : '';
   r.title = document.getElementById('efTitle').value.trim();
   if(!r.title){ toast('请输入标题', true); return; }
   r.type = document.getElementById('efType').value;
@@ -3178,22 +3123,24 @@ function saveEditor(){
   r.priority = document.getElementById('efPriority').value;
   r.owner = document.getElementById('efOwner').value;
   r.dueDate = document.getElementById('efDue').value;
+  // 重复规则只在模板上编辑；实例没有 efRepeat，保留自身系列字段不动（对账以模板为准）
   var efRepeat = document.getElementById('efRepeat');
-  r.recRule = (r.type===TYPE_TASK && efRepeat) ? efRepeat.value : '';
+  if(r.type===TYPE_TASK){
+    if(efRepeat) r.recRule = efRepeat.value;
+  } else {
+    r.recRule = '';
+  }
+  if(!r.recRule) r.recSkip = '[]'; // 关闭重复：清空跳过名单，将来重新开启时按新排期干净起步
   r.goal = document.getElementById('efGoal').value;
   r.tags = document.getElementById('efTags').value.trim();
   r.note = document.getElementById('efNote').value.trim();
   if(r.status===ST_DONE && !r.completedAt) r.completedAt=nowISO();
   if(r.status!==ST_DONE) r.completedAt='';
   if(r.type===TYPE_GOAL && !r.priority) r.priority='P2';
-  // 开启重复：自身就是系列的第 0 期（模板）
+  // 开启重复：自身就是系列的第 0 期（模板）；之后的增删改全部由 reconcileRecurring 对账收敛
   if(r.recRule && !r.seriesId){
     r.seriesId = uid();
     r.seriesSeq = 0;
-  }
-  // 改了规则或截止日：旧的未来实例作废，保存后由 ensure 按新规则重新生成
-  if(old && old.seriesId && (oldRule !== r.recRule || oldDue !== r.dueDate)){
-    removeFutureInstances(old.seriesId, r.id, r.dueDate || todayISO());
   }
   if(EditorState.isNew){
     r.order = Date.now();
@@ -3407,9 +3354,7 @@ function renderView(){
   else if(State.currentView==='archive') renderArchive();
 }
 function renderAll(){
-  repairRecurringV2();         // 一次性：修正 v1 清理误伤下一期墓碑（完成后跳期问题）
-  dedupeRecurringInstances();  // 一次性：清理旧版预生成 bug 造成的重复未来实例
-  ensureRecurringInstances();  // 重复任务兜底：完成/过期/跨设备时自动补齐下一期
+  reconcileRecurring();        // 重复任务声明式对账：缺的建、多的删、改期的校正（幂等，多端一致）
   updateBadges(); updateTopbarStats(); renderView();
 }
 // 顶部常驻「今日已完成 X · 还有 Y 项未完成」；口径与「范围内已完成」一致
@@ -3635,6 +3580,9 @@ function mergeCloudRecords(cloudRecs, cloudDels){
   // 云端共享墓碑并入本地（其他浏览器删的记录，本机也必须知道，否则会把它推回去造成"诈尸"）
   (cloudDels || []).forEach(function(tb){
     if(!tb || !tb.id || !tb.table_name) return;
+    // rpt: 墓碑只是"删云端行"的一次性指令，实例存不存在由 reconcile 对账决定，
+    // 绝不能并入本地抑制名单（旧版本中毒墓碑曾导致连环跳期）
+    if(isRptId(tb.id)) return;
     var ts = tb.deleted_at ? new Date(tb.deleted_at).getTime() : now2;
     if(isNaN(ts)) ts = now2;
     if(!delMap[tb.id] || (delMap[tb.id].ts || 0) < ts) delMap[tb.id] = { table: tb.table_name, ts: ts };
@@ -3660,7 +3608,7 @@ function mergeCloudRecords(cloudRecs, cloudDels){
   // 先遍历本地：每条与云端对比，取更新时间较新的
   State.records.forEach(function(lr){
     if(!lr || !lr.id) return;
-    if(delMap[lr.id]) return; // 已被显式删除的本地残留记录：丢弃
+    if(delMap[lr.id] && !isRptId(lr.id)) return; // 已显式删除的本地残留记录丢弃；rpt 实例由对账决定生死
     added[lr.id] = 1;
     var cr = cloudMap[lr.id];
     if(cr){
@@ -3674,7 +3622,7 @@ function mergeCloudRecords(cloudRecs, cloudDels){
   // 再补云端有但本地没有的（其他设备新增的）；墓碑里的不补
   (cloudRecs || []).forEach(function(cr){
     if(!cr || !cr.id || added[cr.id]) return;
-    if(delMap[cr.id]) return; // 已被任一端删除，跳过
+    if(delMap[cr.id] && !isRptId(cr.id)) return; // 已被任一端删除，跳过；rpt 实例例外（对账说了算）
     merged.push(cr);
   });
 
@@ -4260,6 +4208,7 @@ function bindCalendarEvents(c){
       sort: typeof rec.order === 'number' ? rec.order : 0,
       completed_at: rec.completedAt || null,
       rec_rule: rec.recRule || '', series_id: rec.seriesId || '', series_seq: rec.seriesSeq || 0,
+      rec_skip: rec.recSkip || '[]',
       created_at: rec.createdAt || now, updated_at: now, synced_at: now
     };
   }
@@ -4282,6 +4231,7 @@ function bindCalendarEvents(c){
       tags: t.tags || '', note: t.note || '', subtasks: subs,
       goal: goalTitle, createdAt: t.created_at || '', updatedAt: t.updated_at || '', completedAt: t.completed_at || '',
       recRule: t.rec_rule || '', seriesId: t.series_id || '', seriesSeq: t.series_seq || 0,
+      recSkip: t.rec_skip || '[]',
       order: t.sort || 0 };
   }
   function habitToRow(h, userId, now){
@@ -4431,7 +4381,10 @@ function bindCalendarEvents(c){
         var cloudTB = tbOK ? (rs[3].data || []) : [];
         var tbRestore = []; // 恢复赢：删掉云端墓碑
         cloudTB.forEach(function(tb){
-          if(!tb || !tb.id || delMap[tb.id]) return;
+          if(!tb || !tb.id) return;
+          // rpt: 实例的生死只由模板对账决定，云端 rpt 墓碑不参与裁决（仅删云行动令）
+          if(isRptId(tb.id)) return;
+          if(delMap[tb.id]) return;
           var tDel = tb.deleted_at ? new Date(tb.deleted_at).getTime() : 0;
           if(isNaN(tDel)) tDel = 0;
           if(tb.table_name === 'fd_habits'){
@@ -4477,6 +4430,7 @@ function bindCalendarEvents(c){
           var tbRows = Object.keys(delMap).map(function(id){
             var d = delMap[id];
             if(!d || !d.table) return null;
+            if(isRptId(id)) return null; // rpt 墓碑只留在本机做删云行动令，不跨设备共享
             return { id: id, user_id: u, table_name: d.table,
                      deleted_at: new Date(d.ts || Date.now()).toISOString() };
           }).filter(Boolean);
@@ -4550,22 +4504,8 @@ function bindCalendarEvents(c){
   }
 
   /* ---------- 对外接口 ---------- */
-  // 重复任务迁移 v2：物理删除云端所有 rpt: 墓碑 + 指定的多余未来实例行
-  function purgeCloudRecurring(junkIds){
-    if(!currentUser || !supabase) return Promise.resolve();
-    var u = currentUser.id;
-    var jobs = [ supabase.from('fd_tombstones').delete().eq('user_id', u).like('id', 'rpt:%') ];
-    if(junkIds && junkIds.length){
-      for(var i=0;i<junkIds.length;i+=100){
-        jobs.push(supabase.from('fd_tasks').delete().eq('user_id', u).in('id', junkIds.slice(i, i+100)));
-      }
-    }
-    return Promise.all(jobs).catch(function(e){ console.warn('purge recurring failed', e); });
-  }
-
   window.WB_Cloud = {
     enabled: ENABLED,
-    purgeCloudRecurring: purgeCloudRecurring,
     init: function(onReady){
       authedCallbacks.push(onReady);
       if(!ENABLED){ onReady(null); return; }
