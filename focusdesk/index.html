@@ -1329,6 +1329,14 @@ function readRecSkip(tpl){
    （墓碑只作为"删除云端行"的一次性指令，修掉跨设备墓碑中毒后连环跳期的问题）。*/
 function reconcileRecurring(){
   var today = todayISO();
+  // 自清：旧版本留在本机的 rpt 墓碑是中毒数据（可能正指向对账即将重建的期），
+  // 而 rpt 墓碑已不参与任何"抑制"判断，直接全部移除；本次新产生的删除指令稍后再写入
+  var staleMap = readDelMap();
+  var staleRpt = Object.keys(staleMap).filter(isRptId);
+  if(staleRpt.length){
+    staleRpt.forEach(function(k){ delete staleMap[k]; });
+    try { localStorage.setItem(STORAGE_DEL_KEY, JSON.stringify(staleMap)); } catch(e){}
+  }
   var groups = {};
   State.records.forEach(function(r){
     if(r.type!==TYPE_TASK || !r.seriesId) return;
