@@ -1287,6 +1287,112 @@ function addRecord(rec){
   return Promise.resolve(rec);
 }
 
+/* ============ 重复任务（模板 + 自动生成实例） ============ */
+var REC_RULES = { daily:'每天', weekly:'每周', monthly:'每月', yearly:'每年' };
+// 从上一期截止日推出下一期；月末自动钳制（31号在2月落到28/29号，不漂移）
+function advanceDue(dueISO, rule){
+  if(!dueISO || !REC_RULES[rule]) return dueISO;
+  var y = +dueISO.slice(0,4), m = +dueISO.slice(5,7)-1, d = +dueISO.slice(8,10);
+  if(rule==='daily'){ var dt=new Date(y,m,d); dt.setDate(dt.getDate()+1); return toISODate(dt); }
+  if(rule==='weekly'){ var dw=new Date(y,m,d); dw.setDate(dw.getDate()+7); return toISODate(dw); }
+  if(rule==='monthly'){
+    var dim = new Date(y,m+2,0).getDate();
+    return toISODate(new Date(y,m+1,Math.min(d,dim)));
+  }
+  if(rule==='yearly'){
+    var dimY = new Date(y+1,2,0).getDate();
+    return toISODate(new Date(y+1,m,Math.min(d,dimY)));
+  }
+  return dueISO;
+}
+// 确定性实例 ID：同一系列同一期，任何设备算出的 ID 都相同 → upsert 天然去重
+function recurringInstanceId(seriesId, seq){ return 'rpt:' + seriesId + ':' + seq; }
+function readDelMap(){
+  try { return JSON.parse(localStorage.getItem(STORAGE_DEL_KEY) || '{}'); } catch(e){ return {}; }
+}
+
+// 扫描所有系列，保证"最新一期"总是未到期的未来实例（完成当期 / 当期过期 / 断网补跑都会触发）
+// 返回本次新建的实例列表
+function ensureRecurringInstances(){
+  var created = [];
+  var delMap = readDelMap();
+  var series = {};
+  State.records.forEach(function(r){
+    if(r.type===TYPE_TASK && r.recRule && r.seriesId) (series[r.seriesId] = series[r.seriesId]||[]).push(r);
+  });
+  Object.keys(series).forEach(function(sid){
+    var list = series[sid];
+    var anchor = list[0];
+    list.forEach(function(r){ if((r.seriesSeq||0) > (anchor.seriesSeq||0)) anchor = r; });
+    var guard = 0;
+    // 推进一步：按 anchor 生成/跳过/接续下一期；返回 'created' | 'skipped'(墓碑) | 'exists'
+    var step = function(){
+      var nextSeq = (anchor.seriesSeq||0) + 1;
+      var nextDue = advanceDue(anchor.dueDate, anchor.recRule);
+      var nextId = recurringInstanceId(sid, nextSeq);
+      var base = {
+        id: nextId, title: anchor.title, type: TYPE_TASK, status: ST_TODO,
+        priority: anchor.priority||'', owner: anchor.owner||'', tags: anchor.tags||'',
+        note: anchor.note||'', goal: anchor.goal||'', subtasks: [],
+        dueDate: nextDue, recRule: anchor.recRule, seriesId: sid, seriesSeq: nextSeq,
+        createdAt: nowISO(), updatedAt: nowISO(), completedAt: '',
+        order: (typeof anchor.order==='number'?anchor.order:Date.now()) + nextSeq
+      };
+      for(var i=0;i<State.records.length;i++){
+        if(State.records[i].id===nextId){ anchor = State.records[i]; return 'exists'; }
+      }
+      // 这一期被用户显式删除（"这期不用做"）：不复活，但用虚拟锚点继续推演后续期数
+      anchor = base;
+      if(delMap[nextId]) return 'skipped';
+      State.records.push(base);
+      created.push(base);
+      return 'created';
+    };
+    // 阶段1 补齐：最新一期已完成或已过期，就一直往后补
+    while(guard++ < 12 && anchor.dueDate && anchor.recRule &&
+          (anchor.status===ST_DONE || anchor.dueDate <= todayISO())){
+      step();
+    }
+    // 阶段2 看一眼下一期：任何时候保证最新真实期之后还有一期（被删就继续往后找，直到落一期）
+    if(anchor.dueDate && anchor.recRule){
+      var g2 = 0;
+      while(g2++ < 12){
+        var res = step();
+        if(res !== 'skipped') break;
+      }
+    }
+  });
+  if(created.length){
+    saveLocal();
+    if(window.WB_Cloud && WB_Cloud.enabled && WB_Cloud.isCloud && WB_Cloud.isCloud()){
+      WB_Cloud.pushAll().catch(function(){});
+    }
+  }
+  return created;
+}
+
+// 修改规则/截止日或改为"不重复"时，清理同系列已生成的未来实例（历史已完成保留）
+function removeFutureInstances(seriesId, keepId, fromDue){
+  var delMap = readDelMap(), changed = false;
+  State.records = State.records.filter(function(r){
+    if(r.seriesId!==seriesId || r.id===keepId) return true;
+    if(r.status===ST_DONE) return true;
+    if(r.dueDate && r.dueDate >= fromDue){
+      delMap[r.id] = { table: 'fd_tasks', ts: Date.now() };
+      changed = true;
+      return false;
+    }
+    return true;
+  });
+  if(changed){
+    try { localStorage.setItem(STORAGE_DEL_KEY, JSON.stringify(delMap)); } catch(e){}
+    saveLocal();
+    if(window.WB_Cloud && WB_Cloud.enabled && WB_Cloud.isCloud && WB_Cloud.isCloud()){
+      WB_Cloud.pushAll().catch(function(){});
+    }
+  }
+}
+
 function updateRecord(rec){
   var idx = -1;
   for(var i=0;i<State.records.length;i++){ if(State.records[i].id===rec.id){idx=i;break;} }
@@ -1541,7 +1647,7 @@ function renderToday(){
         h += '</div>';
       } else {
         h += '<div class="today-item '+it.cls+'" data-id="'+r.id+'">';
-        h += '<div class="ti-title">'+escapeHtml(r.title)+'</div>';
+        h += '<div class="ti-title">'+(r.recRule?'🔁 ':'')+escapeHtml(r.title)+'</div>';
         h += '<div class="ti-meta">';
         if(r.goal) h += '<span class="tag tag-goal">'+escapeHtml(r.goal)+'</span>';
         h += priorityTag(r.priority);
@@ -1582,7 +1688,13 @@ function bindTodayEvents(c){
     b.addEventListener('click', function(){
       var id = b.getAttribute('data-id');
       var r = State.records.find(function(x){return x.id===id;});
-      if(r){ r.status=ST_DONE; r.completedAt=nowISO(); updateRecord(r).then(function(){ renderAll(); toast('已完成'); }); }
+      if(r){
+        r.status=ST_DONE; r.completedAt=nowISO();
+        updateRecord(r).then(function(){
+          renderAll();
+          toast(r.recRule ? ('已完成，下期 '+fmtDate(advanceDue(r.dueDate,r.recRule))) : '已完成');
+        });
+      }
     });
   });
   c.querySelectorAll('[data-act="start"]').forEach(function(b){
@@ -2925,6 +3037,12 @@ function renderEditorBody(){
   body += '<div class="form-row"><label>归属</label><select id="efOwner">'+ownerOpts+'</select></div></div>';
   body += '<div class="form-row-2"><div class="form-row"><label>截止日期</label><input type="date" id="efDue" value="'+(r.dueDate||'')+'"></div>';
   body += '<div class="form-row"><label>关联目标</label><select id="efGoal">'+goalOpts+'</select></div></div>';
+  if(r.type===TYPE_TASK){
+    var repeatOpts = [['','不重复'],['daily','每天'],['weekly','每周'],['monthly','每月'],['yearly','每年']].map(function(o){
+      return '<option value="'+o[0]+'" '+(r.recRule===o[0]?'selected':'')+'>'+o[1]+'</option>';
+    }).join('');
+    body += '<div class="form-row"><label>重复</label><select id="efRepeat" title="到期完成后自动生成下一期，无需每月手动添加">'+repeatOpts+'</select></div>';
+  }
   body += '<div class="form-row"><label>标签</label><input type="text" id="efTags" value="'+escapeHtml(r.tags||'')+'" placeholder="逗号分隔，如 紧急,客户A"></div>';
   body += '<div class="form-row"><label>备注</label><textarea id="efNote" placeholder="详细说明、参考链接...">'+escapeHtml(r.note||'')+'</textarea></div>';
 
@@ -2980,6 +3098,10 @@ function bindEditorEvents(){
 
 function saveEditor(){
   var r = EditorState.rec;
+  // 改前快照：用于判断重复规则/截止日是否变化（变化要清理旧的未来实例）
+  var old = EditorState.isNew ? null : State.records.find(function(x){return x.id===r.id;});
+  var oldRule = old ? (old.recRule||'') : '';
+  var oldDue = old ? (old.dueDate||'') : '';
   r.title = document.getElementById('efTitle').value.trim();
   if(!r.title){ toast('请输入标题', true); return; }
   r.type = document.getElementById('efType').value;
@@ -2987,12 +3109,23 @@ function saveEditor(){
   r.priority = document.getElementById('efPriority').value;
   r.owner = document.getElementById('efOwner').value;
   r.dueDate = document.getElementById('efDue').value;
+  var efRepeat = document.getElementById('efRepeat');
+  r.recRule = (r.type===TYPE_TASK && efRepeat) ? efRepeat.value : '';
   r.goal = document.getElementById('efGoal').value;
   r.tags = document.getElementById('efTags').value.trim();
   r.note = document.getElementById('efNote').value.trim();
   if(r.status===ST_DONE && !r.completedAt) r.completedAt=nowISO();
   if(r.status!==ST_DONE) r.completedAt='';
   if(r.type===TYPE_GOAL && !r.priority) r.priority='P2';
+  // 开启重复：自身就是系列的第 0 期（模板）
+  if(r.recRule && !r.seriesId){
+    r.seriesId = uid();
+    r.seriesSeq = 0;
+  }
+  // 改了规则或截止日：旧的未来实例作废，保存后由 ensure 按新规则重新生成
+  if(old && old.seriesId && (oldRule !== r.recRule || oldDue !== r.dueDate)){
+    removeFutureInstances(old.seriesId, r.id, r.dueDate || todayISO());
+  }
   if(EditorState.isNew){
     r.order = Date.now();
     addRecord(r).then(function(){
@@ -3204,7 +3337,10 @@ function renderView(){
   else if(State.currentView==='dashboard') renderDashboard();
   else if(State.currentView==='archive') renderArchive();
 }
-function renderAll(){ updateBadges(); updateTopbarStats(); renderView(); }
+function renderAll(){
+  ensureRecurringInstances(); // 重复任务兜底：完成/过期/跨设备时自动补齐下一期
+  updateBadges(); updateTopbarStats(); renderView();
+}
 // 顶部常驻「今日已完成 X · 还有 Y 项未完成」；口径与「范围内已完成」一致
 function computeTodayStats(){
   var today = todayISO();
@@ -3585,7 +3721,7 @@ function buildCalendarEvents(){
       }
     }
   });
-  // 长期打卡：按重复周期在日历中生成事件（近 120 天历史 ~ 未来 60 天）
+  // 长期打卡：日历只显示"已打卡"记录（未打卡的未来占位全部移除，避免日历拥挤）
   var dayMs = 86400000;
   var todayMs = new Date(today+'T00:00:00').getTime();
   State.habits.forEach(function(hab){
@@ -3593,19 +3729,12 @@ function buildCalendarEvents(){
     var startISO = (hab.createdAt||'').slice(0,10);
     var startMs = startISO ? new Date(startISO+'T00:00:00').getTime() : (todayMs - 120*dayMs);
     var fromMs = Math.max(startMs, todayMs - 120*dayMs);
-    var endMs = todayMs + 60*dayMs;
+    var endMs = todayMs + 1*dayMs;
     for(var t=fromMs; t<=endMs; t+=dayMs){
       var d = new Date(t);
       var iso = d.getFullYear()+'-'+String(d.getMonth()+1).padStart(2,'0')+'-'+String(d.getDate()).padStart(2,'0');
-      var done = isHabitCompletedOn(hab.id, iso);
-      var duePattern;
-      if(hab.mode==='count'){
-        duePattern = done || (countHabitDoneThisWeek(hab.id, iso) < (hab.countPerWeek||0));
-      } else {
-        duePattern = hab.weekdays.indexOf(getHabitWeekday(iso))>=0;
-      }
-      if(!duePattern) continue;
-      push(iso, { kind: done ? 'habit-done' : 'habit', title: hab.title, id: hab.id, isHabit: true });
+      if(!isHabitCompletedOn(hab.id, iso)) continue;
+      push(iso, { kind: 'habit-done', title: hab.title, id: hab.id, isHabit: true });
     }
   });
   Object.keys(map).forEach(function(date){
@@ -3643,7 +3772,8 @@ function renderCalendarEvent(ev){
   }
   h += ' title="'+escapeHtml(ev.title)+(ev.goalTitle?' · '+escapeHtml(ev.goalTitle):'')+'">';
   h += '<span class="ev-check"></span>';
-  h += '<span class="ev-text">'+escapeHtml(ev.title)+'</span>';
+  var repMark = (ev.record && ev.record.recRule) ? '🔁 ' : '';
+  h += '<span class="ev-text">'+repMark+escapeHtml(ev.title)+'</span>';
   if(ev.priority==='P0' || ev.priority==='P1') h += '<span class="ev-pri">'+ev.priority+'</span>';
   h += '</div>';
   return h;
@@ -3849,7 +3979,12 @@ function bindCalendarEvents(c){
           if(!rec) return;
           if(rec.status===ST_DONE){ rec.status=ST_TODO; rec.completedAt=''; }
           else { rec.status=ST_DONE; rec.completedAt=nowISO(); }
-          updateRecord(rec).then(function(){ renderAll(); toast(rec.status===ST_DONE?'已完成':'已恢复'); });
+          updateRecord(rec).then(function(){
+            renderAll();
+            toast(rec.status===ST_DONE
+              ? (rec.recRule ? '已完成，下期 '+fmtDate(advanceDue(rec.dueDate,rec.recRule)) : '已完成')
+              : '已恢复');
+          });
         }
       });
     }
@@ -4053,6 +4188,7 @@ function bindCalendarEvents(c){
       subtasks: JSON.stringify(rec.subtasks || []),
       sort: typeof rec.order === 'number' ? rec.order : 0,
       completed_at: rec.completedAt || null,
+      rec_rule: rec.recRule || '', series_id: rec.seriesId || '', series_seq: rec.seriesSeq || 0,
       created_at: rec.createdAt || now, updated_at: now, synced_at: now
     };
   }
@@ -4074,6 +4210,7 @@ function bindCalendarEvents(c){
       priority: t.priority || '', owner: t.owner || '', dueDate: t.due_date || '',
       tags: t.tags || '', note: t.note || '', subtasks: subs,
       goal: goalTitle, createdAt: t.created_at || '', updatedAt: t.updated_at || '', completedAt: t.completed_at || '',
+      recRule: t.rec_rule || '', seriesId: t.series_id || '', seriesSeq: t.series_seq || 0,
       order: t.sort || 0 };
   }
   function habitToRow(h, userId, now){
