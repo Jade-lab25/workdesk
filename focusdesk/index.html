@@ -1348,18 +1348,12 @@ function ensureRecurringInstances(){
       created.push(base);
       return 'created';
     };
-    // 阶段1 补齐：最新一期已完成或已过期，就一直往后补
-    while(guard++ < 12 && anchor.dueDate && anchor.recRule &&
-          (anchor.status===ST_DONE || anchor.dueDate <= todayISO())){
-      step();
-    }
-    // 阶段2 看一眼下一期：任何时候保证最新真实期之后还有一期（被删就继续往后找，直到落一期）
-    if(anchor.dueDate && anchor.recRule){
-      var g2 = 0;
-      while(g2++ < 12){
-        var res = step();
-        if(res !== 'skipped') break;
-      }
+    // 单循环：锚点是"真实存在、未完成、截止日在未来"的一期 → 链条健康，立即停止
+    // （否则每次刷新都会无条件再造一期 = 重复灾难）；完成/过期才补，墓碑期虚拟跨过
+    var virtual = false;
+    while(guard++ < 12 && anchor.dueDate && anchor.recRule){
+      if(!virtual && anchor.status!==ST_DONE && anchor.dueDate > todayISO()) break;
+      virtual = (step() === 'skipped');
     }
   });
   if(created.length){
@@ -1369,6 +1363,42 @@ function ensureRecurringInstances(){
     }
   }
   return created;
+}
+
+// 一次性清理旧版"阶段2无脑预生成"造成的重复未来实例：
+// 每个系列只留最早的一条"未完成且截止日在未来"的实例，其余写墓碑删除（云端同步删）
+function dedupeRecurringInstances(){
+  try {
+    if(localStorage.getItem('wb_focusdesk_rpt_dedupe_v1')==='1') return;
+  } catch(e){ return; }
+  var delMap = readDelMap();
+  var series = {};
+  State.records.forEach(function(r){
+    if(r.type===TYPE_TASK && r.recRule && r.seriesId) (series[r.seriesId] = series[r.seriesId]||[]).push(r);
+  });
+  var junkIds = {};
+  Object.keys(series).forEach(function(sid){
+    var list = series[sid].slice().sort(function(a,b){ return (a.seriesSeq||0)-(b.seriesSeq||0); });
+    var keeperFound = false, changed = false;
+    list.forEach(function(r){
+      var isFutureTodo = r.status!==ST_DONE && r.dueDate && r.dueDate > todayISO();
+      if(!isFutureTodo) return;
+      if(!keeperFound){ keeperFound = true; return; }
+      junkIds[r.id] = true;
+      delMap[r.id] = { table: 'fd_tasks', ts: Date.now() };
+      changed = true;
+    });
+    if(changed) try { localStorage.setItem(STORAGE_DEL_KEY, JSON.stringify(delMap)); } catch(e){}
+  });
+  var n = Object.keys(junkIds).length;
+  if(n){
+    State.records = State.records.filter(function(r){ return !junkIds[r.id]; });
+    saveLocal();
+    if(window.WB_Cloud && WB_Cloud.enabled && WB_Cloud.isCloud && WB_Cloud.isCloud()){
+      WB_Cloud.pushAll().catch(function(){});
+    }
+  }
+  try { localStorage.setItem('wb_focusdesk_rpt_dedupe_v1','1'); } catch(e){}
 }
 
 // 修改规则/截止日或改为"不重复"时，清理同系列已生成的未来实例（历史已完成保留）
@@ -3338,6 +3368,7 @@ function renderView(){
   else if(State.currentView==='archive') renderArchive();
 }
 function renderAll(){
+  dedupeRecurringInstances(); // 一次性：清理旧版预生成 bug 造成的重复未来实例
   ensureRecurringInstances(); // 重复任务兜底：完成/过期/跨设备时自动补齐下一期
   updateBadges(); updateTopbarStats(); renderView();
 }
