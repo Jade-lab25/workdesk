@@ -40,6 +40,16 @@ function markDirtyById<T extends { id: string } & Syncable>(items: T[], id: stri
   return items.map(item => item.id === id ? markDirty(item) as T : item);
 }
 
+/**
+ * 日历统计口径：成就商店兑换（shop_purchase）是余额层面的消费，
+ * 不反映当日/月/年的正常活动，统计成就值时排除。
+ * 打卡系统里的商品库打卡（commodity，如图"分心记录"）属于正常打卡活动，照常计入；
+ * 任务打卡 / 拖延扣分（task）、待办（todo）同样计入。
+ */
+function isActivityLog(log: AchievementLog): boolean {
+  return log.type !== 'shop_purchase';
+}
+
 function loadState(): AppState {
   try {
     const saved = localStorage.getItem(STORAGE_KEY);
@@ -499,7 +509,7 @@ export function useAppState() {
     });
 
     return {
-      totalAchievements: dayLogs.reduce((sum, log) => sum + log.points, 0),
+      totalAchievements: dayLogs.filter(isActivityLog).reduce((sum, log) => sum + log.points, 0),
       checkInCount: taskCheckIns.length,
     };
   }, [state.achievementLogs, state.checkInRecords]);
@@ -562,7 +572,7 @@ export function useAppState() {
     });
 
     return {
-      totalAchievements: monthLogs.reduce((sum, log) => sum + log.points, 0),
+      totalAchievements: monthLogs.filter(isActivityLog).reduce((sum, log) => sum + log.points, 0),
       checkInCount: taskCheckIns.length,
       todoCount: monthTodos.length,
       timeRecordCount: monthTimeRecords.length,
@@ -598,7 +608,7 @@ export function useAppState() {
     });
 
     return {
-      totalAchievements: yearLogs.reduce((sum, log) => sum + log.points, 0),
+      totalAchievements: yearLogs.filter(isActivityLog).reduce((sum, log) => sum + log.points, 0),
       checkInCount: taskCheckIns.length,
       todoCount: yearTodos.length,
       timeRecordCount: yearTimeRecords.length,

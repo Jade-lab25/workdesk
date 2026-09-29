@@ -149,6 +149,12 @@ CREATE POLICY "Users can view their own check-in records" ON check_in_records
 CREATE POLICY "Users can insert their own check-in records" ON check_in_records
   FOR INSERT WITH CHECK (auth.uid() = user_id);
 
+CREATE POLICY "Users can update their own check-in records" ON check_in_records
+  FOR UPDATE USING (auth.uid() = user_id);
+
+CREATE POLICY "Users can delete their own check-in records" ON check_in_records
+  FOR DELETE USING (auth.uid() = user_id);
+
 CREATE POLICY "Users can view their own time records" ON time_records
   FOR SELECT USING (auth.uid() = user_id);
 
@@ -166,6 +172,12 @@ CREATE POLICY "Users can view their own achievement logs" ON achievement_logs
 
 CREATE POLICY "Users can insert their own achievement logs" ON achievement_logs
   FOR INSERT WITH CHECK (auth.uid() = user_id);
+
+CREATE POLICY "Users can update their own achievement logs" ON achievement_logs
+  FOR UPDATE USING (auth.uid() = user_id);
+
+CREATE POLICY "Users can delete their own achievement logs" ON achievement_logs
+  FOR DELETE USING (auth.uid() = user_id);
 
 CREATE POLICY "Users can view their own inspirations" ON inspirations
   FOR SELECT USING (auth.uid() = user_id);

@@ -1,5 +1,6 @@
 import { useState, useCallback } from 'react';
 import { Download, Upload, FileJson, FileText, CloudUpload, CloudDownload, RefreshCw } from 'lucide-react';
+import type { PullIntervalMinutes } from '../utils/syncSettings';
 
 interface DataSyncProps {
   onExport: () => string;
@@ -9,9 +10,25 @@ interface DataSyncProps {
   isSyncing?: boolean;
   lastSync?: string | null;
   isOnline?: boolean;
+  autoSyncEnabled?: boolean;
+  pullIntervalMinutes?: PullIntervalMinutes;
+  onAutoSyncToggle?: (enabled: boolean) => void;
+  onPullIntervalChange?: (minutes: PullIntervalMinutes) => void;
 }
 
-export function DataSync({ onExport, onImport, onSyncToCloud, onSyncFromCloud, isSyncing, lastSync, isOnline }: DataSyncProps) {
+export function DataSync({
+  onExport,
+  onImport,
+  onSyncToCloud,
+  onSyncFromCloud,
+  isSyncing,
+  lastSync,
+  isOnline,
+  autoSyncEnabled,
+  pullIntervalMinutes,
+  onAutoSyncToggle,
+  onPullIntervalChange,
+}: DataSyncProps) {
   const [importText, setImportText] = useState('');
   const [message, setMessage] = useState('');
   const [messageType, setMessageType] = useState<'success' | 'error'>('success');
@@ -308,6 +325,37 @@ export function DataSync({ onExport, onImport, onSyncToCloud, onSyncFromCloud, i
               {isOnline ? '在线' : '离线'}
             </span>
           </div>
+
+          {autoSyncEnabled !== undefined && (
+            <div className="mb-3 p-3 bg-gray-50 rounded-lg space-y-2">
+              <label className="flex items-center gap-2 cursor-pointer">
+                <input
+                  type="checkbox"
+                  checked={autoSyncEnabled}
+                  onChange={(e) => onAutoSyncToggle?.(e.target.checked)}
+                  className="w-4 h-4 rounded border-gray-300 text-blue-500 focus:ring-blue-500"
+                />
+                <span className="text-sm text-gray-700">自动同步</span>
+              </label>
+              <div className="flex items-center gap-2 pl-6">
+                <span className="text-xs text-gray-500 whitespace-nowrap">检查云端频率</span>
+                <select
+                  value={pullIntervalMinutes}
+                  disabled={!autoSyncEnabled}
+                  onChange={(e) => onPullIntervalChange?.(Number(e.target.value) as PullIntervalMinutes)}
+                  className="text-xs px-2 py-1 border border-gray-200 rounded-md bg-white disabled:opacity-50 disabled:cursor-not-allowed focus:outline-none focus:ring-1 focus:ring-blue-500"
+                >
+                  <option value={5}>每 5 分钟</option>
+                  <option value={10}>每 10 分钟</option>
+                  <option value={15}>每 15 分钟</option>
+                </select>
+              </div>
+              <p className="pl-6 text-xs text-gray-400">
+                自动检查云端更新；本地变更空闲 30 秒后自动上传
+              </p>
+            </div>
+          )}
+
           <div className="flex gap-2">
             <button
               onClick={() => onSyncToCloud?.()}

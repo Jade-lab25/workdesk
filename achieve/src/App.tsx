@@ -90,7 +90,7 @@ function App() {
   // ✅ useMemo 防止 options 对象每渲染重建，稳定 useSync 内部所有 callback
   const syncOptions = useMemo(() => ({ onDataFetched: handleDataFetched }), [handleDataFetched]);
 
-  const { syncState, fetchFromCloud, performSync, syncOnChange } = useSync(userId, syncOptions);
+  const { syncState, fetchFromCloud, performSync, syncOnChange, autoSyncSettings, updateSyncSettings } = useSync(userId, syncOptions);
 
   useEffect(() => {
     const checkAuth = async () => {
@@ -104,8 +104,8 @@ function App() {
     checkAuth();
   }, [fetchFromCloud]);
 
-  // ✅ 当 state 变化时触发本地保存（手动同步模式：数据只保存到本地，不上传云端）
-  // 用户需要手动点击"上传到云端"或"从云端下载"按钮进行同步
+  // ✅ 当 state 变化时保存到本地；已登录且开启自动同步时，
+  //    由 syncOnChange 内部安排 30 秒防抖自动上传（另可随时手动点同步按钮）
   useEffect(() => {
     syncOnChange(userId, state);
   }, [userId, state, syncOnChange]);
@@ -291,6 +291,10 @@ function App() {
                 isSyncing={syncState.isSyncing}
                 lastSync={syncState.lastSync}
                 isOnline={syncState.isOnline}
+                autoSyncEnabled={autoSyncSettings.autoSyncEnabled}
+                pullIntervalMinutes={autoSyncSettings.pullIntervalMinutes}
+                onAutoSyncToggle={(enabled) => updateSyncSettings({ autoSyncEnabled: enabled })}
+                onPullIntervalChange={(minutes) => updateSyncSettings({ pullIntervalMinutes: minutes })}
               />
             </div>
             <div className="md:col-span-2 lg:col-span-1">
