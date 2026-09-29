@@ -516,7 +516,9 @@ export const syncAll = async (userId: string, data: {
     }
 
     // 4. 同步 timeRecords - 可变记录，开始后还会更新 endTime/note，必须 upsert
-    const unsyncedTimeRecords = data.timeRecords.filter(r => isItemDirty(r));
+    // 进行中的记录（endTime 为空）不同步：云端列是 timestamptz，空串会导致整轮同步失败；
+    // 结束后 endTimer 会重新标脏，下一轮自然上传。
+    const unsyncedTimeRecords = data.timeRecords.filter(r => isItemDirty(r) && r.endTime);
     if (unsyncedTimeRecords.length > 0) {
       if (getSyncModeForTable('time_records') === 'upsert') {
         const { error, syncedCount, syncedRecords } = await syncTable('time_records', userId, unsyncedTimeRecords, 500, true);
