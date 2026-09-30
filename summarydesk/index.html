@@ -579,6 +579,10 @@ input:focus, textarea:focus { outline: none; }
           <label data-page-node-id="rWBzZJ3tiautQNVy5jhWPn" class="form-label"><!--pnid:BackP3DtsInpdqm0Q4768d-->事项</label>
           <input data-page-node-id="5yXDdjfqDlk0AGRLSK8YvS" class="form-input" id="logMatter" placeholder="例如：完成同步模块调试" type="text">
         </div>
+        <div class="form-group">
+          <label class="form-label">专注目标</label>
+          <input class="form-input" id="logFocusGoal" placeholder="专注目标（分钟，可选，如 50）" type="number" min="0" step="1">
+        </div>
         <div data-page-node-id="enLFt8zFNIKbuvkWfg7BM5" class="form-group">
           <label data-page-node-id="A9PFnUUudm9MkkDPoLoRcF" class="form-label"><!--pnid:OnhBfWNkj85VHBF02uwu8A-->结果</label>
           <textarea data-page-node-id="Zvyg0VLRDe4RyAhsPxWBgc" class="form-textarea" id="logResult" rows="3" placeholder="成果描述（完成后再填；只写事项就保存，会自动标记为「进行中」）"></textarea>
@@ -772,13 +776,14 @@ input:focus, textarea:focus { outline: none; }
 
     <h3 data-page-node-id="BiEONNdYTgg3zzrbIWUJZ2" style="font-size:15px; margin:12px 0 8px; color:#1f2329"><!--pnid:SURrmwD5V8habkqksMuboc-->📋 工作日志 — 怎么用？</h3>
     <p data-page-node-id="utwsw68qqYQyl7zMXUmZal" style="font-size:13px; line-height:1.7; color:#4e5969; margin-bottom:8px"><!--pnid:YbND6c45YqQyuWVkdAnMVs-->
-      工作日志是结构化记录，方便后续 AI 自动生成周报/日报。每个条目四个字段：
+      工作日志是结构化记录，方便后续 AI 自动生成周报/日报。每个条目四个字段，外加一个可选的专注目标：
     </p>
     <ul data-page-node-id="gK1SvgClrYc5ZmpDf4Q1El" style="font-size:13px; line-height:1.8; color:#4e5969; margin-left:18px; margin-bottom:12px">
       <li data-page-node-id="6A5nDpFm6ur4PzPBQ6f1Dd"><b data-page-node-id="McG6fa2dm03CvoTGPjBAmn"><!--pnid:38HvEfbRi1xZTtGiUQusZv-->事项</b><!--pnid:BlIC4rZhAHwWOXEUapIHW5-->：做了什么（必填）</li>
       <li data-page-node-id="zFkJHC21hyHEnTrONjfG2S"><b data-page-node-id="5UGb1uanPgAHD77RCxs3Ap"><!--pnid:r3GUx7R0JEVLhelhvJZH6k-->结果</b><!--pnid:AFJ5BQGb4GFgCXgesReWft-->：产出/效果如何</li>
       <li data-page-node-id="LeEKYvJqshZxncOZa5Xw2Y"><b data-page-node-id="A2rhz8D3DXI56I1ZmlXxr0"><!--pnid:MFoWPVyUEhNDyQlvenPB7U-->数据</b><!--pnid:TARiqOktY8eSUAufCDMdTF-->：量化成果的数字（有就填，生成的报告更有说服力）</li>
       <li data-page-node-id="zByeSCcxSRQe888GoNcCkI"><b data-page-node-id="w1TtjWn57KyRWtluu8HDIB"><!--pnid:hF3BnEF5XeKwPQR5JnRYzS-->问题</b><!--pnid:Par3X0b2HO5yp56hqsC7yz-->：遇到的困难或风险（没有就不填）</li>
+      <li><b>专注目标</b>：给自己定一个最小专注时长（分钟，可选）。卡片上点「记专注」回填实际时长，达成情况会显示在卡片上，生成总结时 AI 会加一节【专注状态】点评你的专注质量</li>
     </ul>
     <p data-page-node-id="w9ivOzUMW5I95f2hhIRHRd" style="font-size:13px; line-height:1.7; color:#4e5969; margin-bottom:8px"><!--pnid:GXz6x2lwYG85v5XqDMBeWC-->
       顶部左右箭头可以切换日期，补记之前的工作。
@@ -2013,11 +2018,16 @@ var App = (function () {
     $("#logDateText").textContent = label;
   }
 
+  // 编辑态：loadLogToForm 载入时暂存原实际专注值，saveLog 保存后清掉
+  // （编辑走"删旧条+新保存"，不暂存的话先回填专注再补结果会把实际值清空）
+  var editingFocusActual = null;
   function saveLog() {
     var matter = $("#logMatter").value.trim();
     var result = $("#logResult").value.trim();
     var data = $("#logData").value.trim();
     var issue = $("#logIssue").value.trim();
+    var goal = parseInt($("#logFocusGoal").value, 10);
+    if (!(goal > 0)) goal = 0; // 非正整数 / 留空 = 本条没定目标
     if (!matter) { toast("请填写事项"); return; }
     // 有结果 = 已完成；只写了事项 = 进行中（承诺锚点）
     // 等待反馈 / 取消 不走表单，由卡片上的按钮直接切换
@@ -2027,23 +2037,29 @@ var App = (function () {
       result: result || "无",
       data: data || "无",
       issue: issue || "无",
+      focusGoal: goal,
+      focusActual: editingFocusActual,
       status: result ? "done" : "doing"
     };
+    editingFocusActual = null;
     var rid = "log:" + uid();
     Store.put(rid, "log", matter, log);
     $("#logMatter").value = "";
     $("#logResult").value = "";
     $("#logData").value = "";
     $("#logIssue").value = "";
+    $("#logFocusGoal").value = "";
     toast("已记录");
     renderLogs();
   }
 
   function resetLogForm() {
+    editingFocusActual = null;
     $("#logMatter").value = "";
     $("#logResult").value = "";
     $("#logData").value = "";
     $("#logIssue").value = "";
+    $("#logFocusGoal").value = "";
   }
 
   var LOG_STATUS_BADGE = {
@@ -2074,6 +2090,8 @@ var App = (function () {
     Store.put(rid, "log", item.matter, {
       date: item.date, matter: item.matter,
       result: item.result || "无", data: item.data || "无", issue: item.issue || "无",
+      focusGoal: item.focusGoal || 0,
+      focusActual: item.focusActual == null ? null : item.focusActual,
       status: status, created_at: item.created_at // 状态变更不改创建时间
     });
     toast(LOG_STATUS_TOAST[status] || "状态已更新");
@@ -2093,9 +2111,32 @@ var App = (function () {
     $("#logResult").value = item.result && item.result !== "无" ? item.result : "";
     $("#logData").value = item.data && item.data !== "无" ? item.data : "";
     $("#logIssue").value = item.issue && item.issue !== "无" ? item.issue : "";
+    $("#logFocusGoal").value = item.focusGoal || "";
+    editingFocusActual = item.focusActual == null ? null : item.focusActual;
     Store.del(rid);
     toast("已载入编辑，保存将生成新记录");
     window.scrollTo({ top: 0, behavior: "smooth" });
+    renderLogs();
+  }
+
+  // 专注信息一行（卡片、日历共用）；无目标且无实际值时返回空串
+  function focusLine(l) {
+    var goal = l.focusGoal || 0;
+    var actual = l.focusActual == null ? null : l.focusActual;
+    if (!goal && actual == null) return "";
+    if (goal && actual == null) return "🎯 目标 " + goal + " 分钟（待记录）";
+    if (goal) return "🎯 专注 " + actual + "/" + goal + " 分钟 · " + (actual >= goal ? "已达成" : "未达成");
+    return "🎯 专注 " + actual + " 分钟";
+  }
+
+  // 卡片上快速回填实际专注分钟数，只动 focusActual，其他字段不动
+  function fillFocusActual(rid, minutes) {
+    var item = Store.get(rid);
+    if (!item) return;
+    Store.put(rid, "log", item.matter, Object.assign({}, item, {
+      focusActual: minutes,
+      created_at: item.created_at // 回填不改创建时间
+    }));
     renderLogs();
   }
 
@@ -2115,17 +2156,25 @@ var App = (function () {
         var badge = (st === "doing" && item.date > today())
           ? '<span class="log-status planned">📅 计划中</span>'
           : LOG_STATUS_BADGE[st];
-        var acts = (LOG_STATUS_ACTS[st] || LOG_STATUS_ACTS.done).map(function (a) {
+        // 记专注按钮：实际时长未回填时，进行中或定了目标的卡片都可回填
+        // （核心路径是"任务完成后再记录"：补结果后卡片变已完成仍需能填）
+        var baseActs = (LOG_STATUS_ACTS[st] || LOG_STATUS_ACTS.done).slice();
+        if (st !== "cancelled" && item.focusActual == null && (item.focusGoal || st === "doing")) {
+          baseActs.unshift(["focus", "记专注"]);
+        }
+        var acts = baseActs.map(function (a) {
           return '<span class="log-act' + (a[0] === "delete" || a[0] === "cancelled" ? " danger" : "") +
             '" data-act="' + a[0] + '" data-rid="' + item.__rid + '">' + a[1] + '</span>';
         }).join("");
         // 已取消：不展示结果明细，只留事项划线
         var detail = "";
         if (st !== "cancelled") {
+          var fl = focusLine(item);
           detail = '<div class="log-detail">' +
             '<div><span class="label">结果：</span>' + esc(item.result || "无") + '</div>' +
             (item.data && item.data !== "无" ? '<div><span class="label">数据：</span>' + esc(item.data) + '</div>' : "") +
             (item.issue && item.issue !== "无" ? '<div><span class="label">问题：</span>' + esc(item.issue) + '</div>' : "") +
+            (fl ? '<div>' + fl + '</div>' : "") +
             '</div>';
         }
         html += '<div class="log-item' + (st === "cancelled" ? " is-cancelled" : "") + '">' +
@@ -2144,6 +2193,13 @@ var App = (function () {
           Store.del(rid);
           toast("已删除");
           renderLogs();
+        } else if (act === "focus") {
+          var ans = prompt("本次实际专注了多少分钟？（只填数字）");
+          if (ans === null) return;
+          var minutes = parseInt(ans, 10);
+          if (!(minutes > 0)) { toast("请填写大于 0 的分钟数"); return; }
+          fillFocusActual(rid, minutes);
+          toast("已记录专注 " + minutes + " 分钟");
         } else if (act === "edit") {
           loadLogToForm(rid, false);
         } else {
@@ -2327,11 +2383,17 @@ var App = (function () {
       if (l.date >= start && l.date <= end) {
         var statusLine = st === "doing" ? "\n【状态】进行中，尚未完成"
           : st === "waiting" ? "\n【状态】已提交，等待反馈" : "";
+        var goal = l.focusGoal || 0;
+        var actual = l.focusActual == null ? null : l.focusActual;
+        var focusPart = (goal || actual != null)
+          ? "\n【专注】" + (goal ? "目标 " + goal + " 分钟" : "未设定目标") +
+            (actual != null ? " / 实际 " + actual + " 分钟" + (goal ? (actual >= goal ? "（已达成）" : "（未达成）") : "") : "")
+          : "";
         sources.push({ type: "log", rid: l.__rid, title: l.matter, date: l.date,
           text: "【事项】" + l.matter + "\n【结果】" + (l.result || "无") +
             (l.data && l.data !== "无" ? "\n【数据】" + l.data : "") +
             (l.issue && l.issue !== "无" ? "\n【问题】" + l.issue : "") +
-            statusLine });
+            focusPart + statusLine });
       }
     });
     // 灵感
@@ -2392,6 +2454,29 @@ var App = (function () {
       (parts.length ? "（" + parts.join(" / ") + "）" : "") + growthHint;
   }
 
+  // 汇总日期范围内的专注数据，供 AI 写【专注状态】一节；无专注数据返回 ""
+  function focusSummaryText(start, end) {
+    var n = 0, goalCount = 0, sumGoal = 0, filled = 0, sumActual = 0, met = 0;
+    Store.list("log").forEach(function (l) {
+      if ((l.status || "done") === "cancelled") return;
+      if (l.date < start || l.date > end) return;
+      var goal = l.focusGoal || 0;
+      var actual = l.focusActual == null ? null : l.focusActual;
+      if (!goal && actual == null) return;
+      n++;
+      if (goal) { goalCount++; sumGoal += goal; }
+      if (actual != null) {
+        filled++; sumActual += actual;
+        if (goal && actual >= goal) met++;
+      }
+    });
+    if (!n) return "";
+    return "【本期专注数据汇总】\n" +
+      "有专注记录的条目 " + n + " 条；其中设定目标 " + goalCount +
+      " 条，目标总时长 " + sumGoal + " 分钟；已回填实际时长 " + filled +
+      " 条，实际专注总时长 " + sumActual + " 分钟；达成目标 " + met + " 条。";
+  }
+
   function buildPrompt(sources, tplCode, range) {
     var tpl = TEMPLATES[tplCode];
     var start, end;
@@ -2419,10 +2504,16 @@ var App = (function () {
       "【模板格式】\n请严格遵循以下模板结构，用素材内容填充对应位置：\n\n" +
       tpl.markdown + "\n";
 
+    var focusText = focusSummaryText(start, end);
     var userPrompt =
       "【时间范围】" + start + (start !== end ? " ~ " + end : "") + "\n\n" +
       "【以下素材用于生成" + kindLabel + "的工作内容部分】：\n\n" +
       materialWork + "\n\n";
+    if (focusText) userPrompt += focusText + "\n\n";
+
+    var focusReq =
+      "另起一节【专注状态】：基于本期专注数据汇总，写明目标达成率与实际专注总时长，" +
+      "点评专注质量并给出 1-2 条具体改进建议；本期无专注数据则省略该节。";
 
     if (includeGrowth && materialGrowth) {
       userPrompt +=
@@ -2435,7 +2526,8 @@ var App = (function () {
         "4. 语言风格匹配模板类型（" + tpl.name + "）\n" +
         "5. 工作内容与个人成长内容必须分开展示，不要混在一起\n" +
         "6. 在模板输出完毕后，另起一节后以【个人成长】为标题，基于个人成长素材写一段独立总结\n" +
-        "7. 直接输出 Markdown 正文，不要加开场白或结束语";
+        "7. " + focusReq + "\n" +
+        "8. 直接输出 Markdown 正文，不要加开场白或结束语";
     } else {
       userPrompt +=
         "要求：\n" +
@@ -2443,7 +2535,8 @@ var App = (function () {
         "2. 从素材中提取信息，不要编造没有的数据；素材中没有的信息用 {N} 占位符标记\n" +
         "3. 同一类事项合并归纳，避免重复\n" +
         "4. 语言风格匹配模板类型（" + tpl.name + "）\n" +
-        "5. 直接输出 Markdown 正文，不要加开场白或结束语";
+        "5. " + focusReq + "\n" +
+        "6. 直接输出 Markdown 正文，不要加开场白或结束语";
     }
 
     return { system: systemPrompt, user: userPrompt };
@@ -2843,8 +2936,10 @@ var App = (function () {
       html += '</div>';
     }
     block("📋 工作日志", logs, function (l) {
+      var fl = focusLine(l);
       return '<div class="cal-detail-item"><b>' + esc(firstLine(l.matter, 20)) + '</b>' +
-        (l.result && l.result !== "无" ? ' · ' + esc(firstLine(l.result, 20)) : '') + '</div>';
+        (l.result && l.result !== "无" ? ' · ' + esc(firstLine(l.result, 20)) : '') +
+        (fl ? ' <span>' + fl + '</span>' : '') + '</div>';
     });
     block("💡 灵感", ideas, function (i) {
       var dir = i.direction === "growth" ? "个人成长" : (i.direction === "work" ? "工作" : "未分类");
@@ -3193,6 +3288,8 @@ var App = (function () {
       id: rec.rid, user_id: uid_, date: d.date || todayStr(),
       matter: d.matter || '', result: d.result || '无',
       data: d.data || '无', issue: d.issue || '无',
+      focus_goal: d.focusGoal || 0,
+      focus_actual: d.focusActual == null ? null : d.focusActual,
       status: d.status || 'done',
       created_at: d.created_at || rec.updated_at || now,
       updated_at: rec.updated_at || d.created_at || now,
@@ -3200,7 +3297,7 @@ var App = (function () {
     };
   }
   function recFromLogRow(row){
-    var d = { date: row.date || '', matter: row.matter || '', result: row.result || '', data: row.data || '', issue: row.issue || '', status: row.status || 'done', created_at: row.created_at || '' };
+    var d = { date: row.date || '', matter: row.matter || '', result: row.result || '', data: row.data || '', issue: row.issue || '', focusGoal: row.focus_goal || 0, focusActual: row.focus_actual == null ? null : row.focus_actual, status: row.status || 'done', created_at: row.created_at || '' };
     return {
       rid: row.id, type: 'log', title: row.matter || '',
       data: JSON.stringify(d),
