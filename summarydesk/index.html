@@ -1,9 +1,8 @@
 <!DOCTYPE html>
 <html data-page-node-id="PuCW2E6uQSGfJQjuqF98kB" lang="zh-CN">
 <head data-page-node-id="KKkCbTYsTx26cHOKfBBtUt">
-<script data-page-node-id="8WiNd6JpByi1O0LaFnP9Mm" src="/page/page_comm/inject.js"></script>
 <meta data-page-node-id="ozdITc9PxawvD4bHFkvt86" charset="UTF-8">
-<meta data-page-node-id="Aef3c38X4uUPBnnMEbN2xb" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no" name="viewport">
+<meta data-page-node-id="Aef3c38X4uUPBnnMEbN2xb" content="width=device-width, initial-scale=1.0, viewport-fit=cover" name="viewport">
 <title data-page-node-id="2xypUCxZD8sWwwBfK2gJPs" data-pnid-children="YzJJR1zhfxGXxEQKCSZeKp">Summary Desk · 内容总结工作台</title>
 <style data-page-node-id="ppd2nIq2sS8lLo6a2Gfobj" data-pnid-children="uQeBNSfKPa4rmFaoa1N0S9">
 /* ================= Reset & Base ================= */
@@ -389,7 +388,7 @@ input:focus, textarea:focus { outline: none; }
   background: #fafbfc; border: 1px solid #e5e6eb; border-radius: 8px;
   padding: 14px; min-height: 120px; font-size: 13px;
   line-height: 1.7; white-space: pre-wrap; word-break: break-word;
-  margin-top: 12px;
+  margin-top: 12px; overflow-x: auto;
 }
 .result-area.loading { color: #86909c; font-style: italic; }
 .result-actions {
@@ -729,6 +728,17 @@ input:focus, textarea:focus { outline: none; }
       💡 API Key 仅保存在浏览器 localStorage，不上传至任何服务器。
     </div>
 
+    <hr style="border:none;border-top:1px solid #e5e6eb;margin:18px 0 14px">
+    <div class="form-group">
+      <label class="form-label">数据备份</label>
+      <div style="display:flex; gap:10px">
+        <button class="btn btn-secondary" id="exportBtn" style="flex:1" type="button">导出备份</button>
+        <button class="btn btn-secondary" id="importBtn" style="flex:1" type="button">导入恢复</button>
+      </div>
+      <input type="file" id="importFile" accept="application/json,.json" style="display:none">
+      <div class="setting-hint">导出本机全部记录（灵感 / 素材 / 日志 / 报告）为 JSON；导入与现有数据合并，重复 ID 以文件为准，并自动同步到云端。</div>
+    </div>
+
   </div>
 </div>
 
@@ -776,7 +786,7 @@ input:focus, textarea:focus { outline: none; }
 
     <h3 data-page-node-id="UkMNqhKSqDI842VwCuduvt" style="font-size:15px; margin:12px 0 8px; color:#1f2329"><!--pnid:OlgY2oxlez1GL2bDJncazC-->✨ 总结生成 — 怎么用？</h3>
     <ol data-page-node-id="naOe09l0BjIX9SmgXnh39O" style="font-size:13px; line-height:1.8; color:#4e5969; margin-left:18px; margin-bottom:12px">
-      <li data-page-node-id="i9h4AUhvPTPyMfeBJSUOTd"><b data-page-node-id="I4aZpH4N4s7tZZA30ajXu8"><!--pnid:jYygGYgf0Wjd0h9oNJKJBW-->选模板</b><!--pnid:Wz4CKwPurlL48vjLyuog09-->：6 种行业模板，选最贴近你场景的</li>
+      <li data-page-node-id="i9h4AUhvPTPyMfeBJSUOTd"><b data-page-node-id="I4aZpH4N4s7tZZA30ajXu8"><!--pnid:jYygGYgf0Wjd0h9oNJKJBW-->选模板</b><!--pnid:Wz4CKwPurlL48vjLyuog09-->：8 种行业模板，选最贴近你场景的</li>
       <li data-page-node-id="kI9kaJEFLrS5KPfp2ATzo1"><b data-page-node-id="nFgTMFYJSzKGWiN1Kewig8"><!--pnid:YW2GKt3d6pn12q1Kvqxxrl-->选范围</b><!--pnid:qXCJs3it904WEvevlzTn4U-->：
         <ul data-page-node-id="rXTZAHYtEE1tfo3JyvkbEj" style="margin-top:4px">
           <li data-page-node-id="eJ0P4MuFgB3tngDCA4l1c6"><!--pnid:1wljQYzbNLe3hUqMWx93zl-->日报：当天的所有日志 + 灵感 + 素材</li>
@@ -852,9 +862,7 @@ input:focus, textarea:focus { outline: none; }
 /* =====================================================================
  * 常量
  * ===================================================================== */
-var DATABASE_ID = "xiL7ryGFOJDIKCRafnYg0o";
 var LS_ROWS = "sdw:v1:rows";
-var LS_IDMAP = "sdw:v1:idmap";
 var LS_QUEUE = "sdw:v1:queue";
 var LS_LLM = "sdw:v1:llm";
 
@@ -945,7 +953,6 @@ function parseTags(text) {
  * ===================================================================== */
 var Store = (function () {
   var rows = {};
-  var idmap = {};
   var queue = {};
   var sdk = null, ready = false, connecting = false, anon = false;
   var lastPull = 0, flushTm = null, pollTm = null, booted = false;
@@ -962,14 +969,21 @@ var Store = (function () {
   function loadLocal() {
     try {
       var r = localStorage.getItem(LS_ROWS); if (r) rows = JSON.parse(r) || {};
-      var m = localStorage.getItem(LS_IDMAP); if (m) idmap = JSON.parse(m) || {};
       var q = localStorage.getItem(LS_QUEUE); if (q) queue = JSON.parse(q) || {};
-    } catch (e) { rows = {}; idmap = {}; queue = {}; }
+    } catch (e) { rows = {}; queue = {}; }
+    // 删除行 30 天后本地清除（与云端墓碑 TTL 对齐；此时墓碑已完成跨设备传播）
+    try {
+      var cutoff = new Date(Date.now() - 30 * 24 * 3600 * 1000).toISOString();
+      for (var rid in rows) {
+        if (rows.hasOwnProperty(rid) && rows[rid].deleted && rows[rid].updated_at && rows[rid].updated_at < cutoff) {
+          delete rows[rid]; delete queue[rid];
+        }
+      }
+    } catch (e) { /* 时间解析失败跳过清理 */ }
   }
   function saveLocal() {
     try {
       localStorage.setItem(LS_ROWS, JSON.stringify(rows));
-      localStorage.setItem(LS_IDMAP, JSON.stringify(idmap));
       if (Object.keys(queue).length) localStorage.setItem(LS_QUEUE, JSON.stringify(queue));
       else localStorage.removeItem(LS_QUEUE);
     } catch (e) { /* 配额溢出等静默降级 */ }
@@ -982,8 +996,10 @@ var Store = (function () {
   /* ---- 读取 ---- */
   function pull() {
     if (!api()) return Promise.resolve(false);
-    return window.WB_Cloud.fetchAll().then(function (recs) {
-      var changed = mergeRows(recs || []);
+    return window.WB_Cloud.fetchAll().then(function (payload) {
+      var changed = mergeRows(payload.recs || []);
+      // 其他设备删除的记录：本地也标记删除
+      if (applyTombstones(payload.tombstones || [])) changed = true;
       lastPull = Date.now(); anon = false; ready = true;
       saveLocal(); paint();
       if (changed) emit();
@@ -991,6 +1007,25 @@ var Store = (function () {
     }).catch(function () {
       return false;
     });
+  }
+
+  /* ---- 应用云端墓碑（其他设备执行的删除） ---- */
+  function applyTombstones(tbs) {
+    var changed = false;
+    for (var i = 0; i < tbs.length; i++) {
+      var tb = tbs[i];
+      if (!tb || !tb.id) continue;
+      var local = rows[tb.id];
+      if (local && !local.deleted) {
+        rows[tb.id] = {
+          rid: tb.id, type: local.type, title: local.title, data: local.data,
+          updated_at: tb.deleted_at || nowIso(), deleted: true
+        };
+        delete queue[tb.id];
+        changed = true;
+      }
+    }
+    return changed;
   }
 
   /* ---- LWW 合并（云端行 → rows，updated_at 语义 = created_at） ---- */
@@ -1008,11 +1043,6 @@ var Store = (function () {
     }
     return changed;
   }
-  function is401(err) {
-    var s = String((err && (err.message || err.msg)) || err || "");
-    return s.indexOf("401") >= 0 || s.indexOf("not login") >= 0 || s.indexOf("未登录") >= 0;
-  }
-
   /* ---- 写入 ---- */
   function put(rid, type, title, obj) {
     var rec = {
@@ -1082,7 +1112,8 @@ var Store = (function () {
 
   function sync() {
     if (!api()) return retry();
-    return flush().then(function () { return pull(); }).then(function () {
+    // 先拉后推：先合并云端新版本，避免本机旧行 upsert 覆盖云端新编辑
+    return pull().then(function () { return flush(); }).then(function () {
       toast(anon ? "未登录，改动已存在本机" : "已同步");
     });
   }
@@ -1135,9 +1166,15 @@ var Store = (function () {
   function startPoll() {
     if (pollTm) return;
     pollTm = setInterval(function () {
-      if (!api()) return;
-      flush().then(function () { if (!anon) pull(); });
+      if (!api() || anon) return;
+      pull().then(function () { return flush(); });
     }, 60000);
+    // 回到页面时自动拉取（15 秒节流，避免频繁切换打接口）
+    document.addEventListener("visibilitychange", function () {
+      if (document.hidden || !api() || anon) return;
+      if (Date.now() - lastPull < 15000) return;
+      pull().then(function () { return flush(); });
+    });
   }
   function state() {
     return {
@@ -1153,6 +1190,7 @@ var Store = (function () {
     if (!pill) return;
     pill.classList.remove("on", "warn", "err");
     act.hidden = true; act.onclick = null;
+    pill.onclick = null; pill.style.cursor = ""; pill.title = "";
     var noticeHtml = "";
 
     if (psv) {
@@ -1186,6 +1224,10 @@ var Store = (function () {
       pill.classList.add("on");
       txt.textContent = state().pending ? ("同步中 · " + state().pending) : "已同步资料库";
       if (foot) foot.textContent = "资料库已连接 · 自动同步";
+      // 已连接时点击状态条 = 立即同步
+      pill.style.cursor = "pointer";
+      pill.title = "点击立即同步";
+      pill.onclick = function () { sync(); };
     }
     if (nt) nt.innerHTML = noticeHtml;
     if (nt && noticeHtml) {
@@ -1211,15 +1253,48 @@ var Store = (function () {
     var recs = [], deleted = [];
     for (var rid in rows) {
       if (!rows.hasOwnProperty(rid)) continue;
-      if (rows[rid].deleted) deleted.push(rid); else recs.push(rows[rid]);
+      // 删除项带类型和删除时间：pushAll 据此立墓碑（不再用全量差集删除）
+      if (rows[rid].deleted)
+        deleted.push({ rid: rid, type: rows[rid].type, updated_at: rows[rid].updated_at });
+      else recs.push(rows[rid]);
     }
     return { recs: recs, deleted: deleted };
+  }
+
+  /* ---- 导出 / 导入 ---- */
+  function exportJSON() {
+    var data = { app: "summarydesk", version: 1, exported_at: new Date().toISOString(), rows: rows };
+    return JSON.stringify(data, null, 2);
+  }
+  function importJSON(text) {
+    var data;
+    try { data = JSON.parse(text); } catch (e) { throw new Error("文件不是有效的 JSON"); }
+    var src = data && (data.rows || data.records);
+    if (!src || typeof src !== "object") throw new Error("文件格式不正确，未找到记录");
+    var now = nowIso(), count = 0;
+    for (var k in src) {
+      if (!src.hasOwnProperty(k)) continue;
+      var r = src[k];
+      if (!r || !r.rid) continue;
+      // 导入记录统一刷新时间戳：确保在 LWW 中获胜并立即上云（备份恢复语义）
+      var imp = {
+        rid: r.rid, type: r.type || "idea", title: r.title || "",
+        data: typeof r.data === "string" ? r.data : JSON.stringify(r.data || {}),
+        updated_at: now, deleted: !!r.deleted
+      };
+      var local = rows[r.rid];
+      if (!local || imp.updated_at >= local.updated_at) {
+        rows[r.rid] = imp; queue[r.rid] = imp; count++;
+      }
+    }
+    if (count) { saveLocal(); emit(); schedule(); }
+    return count;
   }
 
   return {
     on: on, boot: boot, put: put, del: del, get: get, list: list,
     flush: flush, sync: sync, state: state, paint: paint, login: login, retry: retry,
-    cloudSnapshot: cloudSnapshot
+    cloudSnapshot: cloudSnapshot, exportJSON: exportJSON, importJSON: importJSON
   };
 })();
 </script>
@@ -1999,7 +2074,7 @@ var App = (function () {
     Store.put(rid, "log", item.matter, {
       date: item.date, matter: item.matter,
       result: item.result || "无", data: item.data || "无", issue: item.issue || "无",
-      status: status
+      status: status, created_at: item.created_at // 状态变更不改创建时间
     });
     toast(LOG_STATUS_TOAST[status] || "状态已更新");
     renderLogs();
@@ -2517,7 +2592,11 @@ var App = (function () {
     if (!lastResult) return;
     var start = $("#rangeStart").value;
     var end = $("#rangeEnd").value;
-    if (currentRange === "daily") { start = today(); end = today(); }
+    // 日报：用日期选择器里的实际日期（补写历史日报时不能写成今天）
+    if (currentRange === "daily") {
+      start = $("#dailyDate").value || today();
+      end = start;
+    }
     var kind = currentRange === "daily" ? "daily" : currentRange === "weekly" ? "weekly" : "custom";
     var tpl = TEMPLATES[currentTemplate];
     var title = (kind === "daily" ? "日报" : kind === "weekly" ? "周报" : "总结") +
@@ -2864,6 +2943,36 @@ var App = (function () {
     $("#settingsClose").onclick = closeSettings;
     $("#settingsMask").onclick = closeSettings;
 
+    // 数据备份：导出 / 导入
+    $("#exportBtn").onclick = function () {
+      try {
+        var json = Store.exportJSON();
+        var blob = new Blob([json], { type: "application/json" });
+        var a = document.createElement("a");
+        a.href = URL.createObjectURL(blob);
+        a.download = "summarydesk-backup-" + new Date().toISOString().slice(0, 10) + ".json";
+        document.body.appendChild(a); a.click();
+        setTimeout(function () { URL.revokeObjectURL(a.href); a.remove(); }, 1000);
+        toast("已导出备份文件");
+      } catch (e) { toast("导出失败：" + e.message); }
+    };
+    $("#importBtn").onclick = function () { $("#importFile").click(); };
+    $("#importFile").onchange = function (e) {
+      var file = e.target.files && e.target.files[0];
+      if (!file) return;
+      var reader = new FileReader();
+      reader.onload = function () {
+        if (!confirm("导入文件中的记录将合并到本机，重复 ID 以文件为准，是否继续？")) return;
+        try {
+          var n = Store.importJSON(String(reader.result));
+          toast(n ? ("已导入 " + n + " 条记录") : "文件中没有可导入的记录");
+          switchTab(currentTab); // 刷新当前视图
+        } catch (err) { toast("导入失败：" + err.message); }
+      };
+      reader.readAsText(file);
+      e.target.value = "";
+    };
+
     // 帮助
     $("#helpBtn").onclick = openHelp;
     $("#helpClose").onclick = closeHelp;
@@ -3049,6 +3158,11 @@ var App = (function () {
   }
 
   /* ---------- 数据转换（本地 rec ⇄ 表行） ---------- */
+  function tableOfType(type){
+    if(type === 'log') return 'summary_logs';
+    if(type === 'report') return 'summary_docs';
+    return 'summary_ideas'; // idea / material
+  }
   function ideaRowFromRec(rec, uid_, now){
     var d = parseData(rec.data);
     return {
@@ -3057,7 +3171,9 @@ var App = (function () {
       tags: d.tags || [],
       direction: d.direction === 'work' ? 'work' : d.direction === 'growth' ? 'growth' : 'none',
       source: rec.type === 'material' ? (d.source || '灵感转化') : null,
-      created_at: d.created_at || now, synced_at: now
+      created_at: d.created_at || rec.updated_at || now,
+      updated_at: rec.updated_at || d.created_at || now,
+      synced_at: now
     };
   }
   function recFromIdeaRow(row){
@@ -3068,7 +3184,7 @@ var App = (function () {
       rid: row.id, type: isMat ? 'material' : 'idea',
       title: String(row.content || '').split('\n')[0].slice(0, 30),
       data: JSON.stringify(d),
-      updated_at: row.created_at || '', deleted: false
+      updated_at: row.updated_at || row.created_at || '', deleted: false
     };
   }
   function logRowFromRec(rec, uid_, now){
@@ -3078,15 +3194,17 @@ var App = (function () {
       matter: d.matter || '', result: d.result || '无',
       data: d.data || '无', issue: d.issue || '无',
       status: d.status || 'done',
-      created_at: d.created_at || now, synced_at: now
+      created_at: d.created_at || rec.updated_at || now,
+      updated_at: rec.updated_at || d.created_at || now,
+      synced_at: now
     };
   }
   function recFromLogRow(row){
-    var d = { date: row.date || '', matter: row.matter || '', result: row.result || '', data: row.data || '', issue: row.issue || '', status: row.status || 'done' };
+    var d = { date: row.date || '', matter: row.matter || '', result: row.result || '', data: row.data || '', issue: row.issue || '', status: row.status || 'done', created_at: row.created_at || '' };
     return {
       rid: row.id, type: 'log', title: row.matter || '',
       data: JSON.stringify(d),
-      updated_at: row.created_at || '', deleted: false
+      updated_at: row.updated_at || row.created_at || '', deleted: false
     };
   }
   function docRowFromRec(rec, uid_, now){
@@ -3101,7 +3219,9 @@ var App = (function () {
       kind: d.kind === 'daily' ? 'daily' : d.kind === 'weekly' ? 'weekly' : 'custom',
       template_code: d.template || '', range_start: start, range_end: end,
       sources: d.source_rids || [], summary: d.content || '',
-      created_at: d.created_at || now, synced_at: now
+      created_at: d.created_at || rec.updated_at || now,
+      updated_at: rec.updated_at || d.created_at || now,
+      synced_at: now
     };
   }
   function recFromDocRow(row){
@@ -3115,23 +3235,27 @@ var App = (function () {
     return {
       rid: row.id, type: 'report', title: row.title || '',
       data: JSON.stringify(d),
-      updated_at: row.created_at || '', deleted: false
+      updated_at: row.updated_at || row.created_at || '', deleted: false
     };
   }
 
   /* ---------- 拉取云端 → 本地格式 ---------- */
   function fetchAll(){
-    if(!currentUser) return Promise.resolve([]);
+    if(!currentUser) return Promise.resolve({ recs: [], tombstones: [] });
     var u = currentUser.id;
     var q = function(t){ return supabase.from(t).select('*').eq('user_id', u); };
-    return Promise.all([q('summary_ideas'), q('summary_logs'), q('summary_docs')])
+    // 墓碑表可能尚未建（SQL 未执行）：单独软失败，不影响主数据同步
+    var tq = Promise.resolve(supabase.from('sd_tombstones')
+      .select('id,table_name,deleted_at').eq('user_id', u))
+      .then(function(r){ return r; }, function(){ return { data: [] }; });
+    return Promise.all([q('summary_ideas'), q('summary_logs'), q('summary_docs'), tq])
       .then(function(rs){
-        for(var i=0;i<rs.length;i++){ if(rs[i].error) throw new Error(rs[i].error.message); }
+        for(var i=0;i<3;i++){ if(rs[i].error) throw new Error(rs[i].error.message); }
         var recs = [];
         (rs[0].data || []).forEach(function(r){ recs.push(recFromIdeaRow(r)); });
         (rs[1].data || []).forEach(function(r){ recs.push(recFromLogRow(r)); });
         (rs[2].data || []).forEach(function(r){ recs.push(recFromDocRow(r)); });
-        return recs;
+        return { recs: recs, tombstones: (rs[3] && rs[3].data) || [] };
       });
   }
 
@@ -3143,33 +3267,67 @@ var App = (function () {
     var now = nowIsoW();
     var snap = window.Store.cloudSnapshot();
     var ideas = [], logs = [], docs = [];
-    var localIds = { summary_ideas: {}, summary_logs: {}, summary_docs: {} };
     snap.recs.forEach(function(rec){
-      if(rec.type === 'log'){ logs.push(logRowFromRec(rec, u, now)); localIds.summary_logs[rec.rid] = 1; }
-      else if(rec.type === 'report'){ docs.push(docRowFromRec(rec, u, now)); localIds.summary_docs[rec.rid] = 1; }
-      else { ideas.push(ideaRowFromRec(rec, u, now)); localIds.summary_ideas[rec.rid] = 1; }
+      if(rec.type === 'log') logs.push(logRowFromRec(rec, u, now));
+      else if(rec.type === 'report') docs.push(docRowFromRec(rec, u, now));
+      else ideas.push(ideaRowFromRec(rec, u, now));
     });
-    var sel = function(t){ return supabase.from(t).select('id,user_id').eq('user_id', u); };
-    return Promise.all([sel('summary_ideas'), sel('summary_logs'), sel('summary_docs')])
-      .then(function(rs){
-        for(var i=0;i<rs.length;i++){ if(rs[i].error) throw new Error(rs[i].error.message); }
-        var dels = [];
-        (rs[0].data || []).forEach(function(r){ if(!localIds.summary_ideas[r.id]) dels.push(supabase.from('summary_ideas').delete().eq('id', r.id)); });
-        (rs[1].data || []).forEach(function(r){ if(!localIds.summary_logs[r.id]) dels.push(supabase.from('summary_logs').delete().eq('id', r.id)); });
-        (rs[2].data || []).forEach(function(r){ if(!localIds.summary_docs[r.id]) dels.push(supabase.from('summary_docs').delete().eq('id', r.id)); });
-        return Promise.all(dels);
-      })
-      .then(function(delRs){
-        for(var i=0;i<(delRs||[]).length;i++){ if(delRs[i] && delRs[i].error) throw new Error(delRs[i].error.message); }
-        var p = Promise.resolve();
-        if(ideas.length) p = p.then(function(){ return supabase.from('summary_ideas').upsert(ideas, { onConflict: 'id' }); });
-        if(logs.length) p = p.then(function(){ return supabase.from('summary_logs').upsert(logs, { onConflict: 'id' }); });
-        if(docs.length) p = p.then(function(){ return supabase.from('summary_docs').upsert(docs, { onConflict: 'id' }); });
-        return p;
-      })
-      .then(function(rs){
-        for(var i=0;i<(rs||[]).length;i++){ if(rs[i] && rs[i].error) throw new Error(rs[i].error.message); }
+    // 本地删除 → 墓碑行（显式删除才动云端，废弃全量差集删除——那在 1000 行上限外会误删数据）
+    var localTb = {};
+    var tbRows = snap.deleted.map(function(d){
+      localTb[d.rid] = 1;
+      return { id: d.rid, user_id: u, table_name: tableOfType(d.type),
+               deleted_at: d.updated_at || now };
+    });
+    // 云端墓碑软失败（表没建时退化为只推数据）
+    var tq = Promise.resolve(supabase.from('sd_tombstones')
+        .select('id,table_name,deleted_at').eq('user_id', u))
+      .then(function(r){ return r; }, function(){ return { data: [], error: { message: 'tombstone unavailable' } }; });
+    return tq.then(function(tr){
+      var tbOK = !tr.error, cloudTB = tbOK ? (tr.data || []) : [], dels = [];
+      // 本地墓碑：删除对应表行
+      tbRows.forEach(function(tb){
+        dels.push(supabase.from(tb.table_name).delete().eq('user_id', u).eq('id', tb.id));
       });
+      // 云端有、本机不知道的墓碑：确保表行已删（防另一台设备刚推回来）；本地记录状态随后由 pull 应用
+      cloudTB.forEach(function(tb){
+        if(!tb || !tb.id || localTb[tb.id]) return;
+        dels.push(supabase.from(tb.table_name).delete().eq('user_id', u).eq('id', tb.id));
+      });
+      return Promise.all(dels).then(function(delRs){
+        return { delRs: delRs, tbOK: tbOK, tbRows: tbRows };
+      });
+    })
+    .then(function(res){
+      for(var i=0;i<(res.delRs||[]).length;i++){
+        if(res.delRs[i] && res.delRs[i].error) throw new Error(res.delRs[i].error.message);
+      }
+      // 墓碑上云（跨设备共享删除）+ 清理 30 天前旧墓碑；软失败不阻断数据推送
+      var chain = Promise.resolve();
+      if(res.tbOK){
+        if(res.tbRows.length){
+          chain = chain.then(function(){
+            return supabase.from('sd_tombstones').upsert(res.tbRows,
+              { onConflict: 'user_id,table_name,id' });
+          }).then(function(r){ if(r && r.error) console.warn('[Cloud] tombstone upsert: ' + r.error.message); });
+        }
+        chain = chain.then(function(){
+          return supabase.from('sd_tombstones').delete().eq('user_id', u)
+            .lt('deleted_at', new Date(Date.now() - 30*24*3600*1000).toISOString());
+        }).then(function(r){ if(r && r.error) console.warn('[Cloud] tombstone prune: ' + r.error.message); });
+      }
+      return chain;
+    })
+    .then(function(){
+      var p = Promise.resolve();
+      if(ideas.length) p = p.then(function(){ return supabase.from('summary_ideas').upsert(ideas, { onConflict: 'id' }); });
+      if(logs.length) p = p.then(function(){ return supabase.from('summary_logs').upsert(logs, { onConflict: 'id' }); });
+      if(docs.length) p = p.then(function(){ return supabase.from('summary_docs').upsert(docs, { onConflict: 'id' }); });
+      return p;
+    })
+    .then(function(rs){
+      if(rs && rs.error) throw new Error(rs.error.message);
+    });
   }
 
   /* ---------- 保存挂钩：变更后防抖全量推送 ---------- */

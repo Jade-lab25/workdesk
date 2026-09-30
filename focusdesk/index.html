@@ -690,7 +690,6 @@ var ICONS = {
 /* ============ Constants ============ */
 var DATABASE_ID = 'HHhhQsiXJHBqyPHFqhFl39';
 var STORAGE_KEY = 'wb_focusdesk_v1';
-var STORAGE_PENDING_KEY = 'wb_focusdesk_pending';
 var STORAGE_DEL_KEY = 'wb_focusdesk_deleted'; // 多端安全：显式删除标记（谁删的、删哪张表）
 var TYPE_TASK='任务', TYPE_IDEA='灵感', TYPE_GOAL='目标';
 var ST_TODO='待处理', ST_DOING='进行中', ST_DONE='已完成', ST_IDEA='待转化', ST_ARCHIVE='已归档';
@@ -699,7 +698,9 @@ var OWNER_TAGS = { '工作':'work','个人':'personal','学习':'study','生活'
 
 function uid(){ return 'r_'+Math.random().toString(36).slice(2,10)+Date.now().toString(36); }
 function todayISO(){ var d=new Date(); return d.getFullYear()+'-'+String(d.getMonth()+1).padStart(2,'0')+'-'+String(d.getDate()).padStart(2,'0'); }
-function nowISO(){ return new Date().toISOString(); }
+// 时钟偏差校正（WB_Cloud 登录后按服务器时间设置偏移，毫秒）
+window.__wbClockOffset = window.__wbClockOffset || 0;
+function nowISO(){ return new Date(Date.now() + window.__wbClockOffset).toISOString(); }
 function fmtDate(s){ if(!s)return ''; var d=new Date(s); if(isNaN(d))return s; return d.getMonth()+1+'月'+d.getDate()+'日'; }
 function fmtDateTime(s){
   if(!s) return '';
@@ -756,8 +757,7 @@ var State = {
   kanbanGoal: '',     // 看板按所属目标筛选
   kanbanOwner: '',    // 看板按归属筛选
   habits: [],         // 长期打卡：习惯定义（从系统记录加载）
-  habitLogs: [],      // 长期打卡：打卡日志 [{habitId,date,completedAt}]
-  pendingOps: []      // offline queued operations
+  habitLogs: []       // 长期打卡：打卡日志 [{habitId,date,completedAt}]
 };
 
 var db = null;
@@ -778,18 +778,16 @@ function loadLocal(){
   try {
     var raw = localStorage.getItem(STORAGE_KEY);
     if(raw) State.records = JSON.parse(raw);
-    var pend = localStorage.getItem(STORAGE_PENDING_KEY);
-    if(pend) State.pendingOps = JSON.parse(pend);
   } catch(e){ console.warn('local load failed', e); }
 }
 
-function saveLocal(){
+// silent=true：合并/push 内部的保存，内容并非本机新编辑，不触发防抖推送（否则每轮拉取都会多推一次）
+function saveLocal(silent){
   try {
     localStorage.setItem(STORAGE_KEY, JSON.stringify(State.records));
-    localStorage.setItem(STORAGE_PENDING_KEY, JSON.stringify(State.pendingOps));
   } catch(e){ console.warn('local save failed', e); }
   // 轻量路径：登录并在线时，防抖触发云端全量 reconcile（数据量小，全量最稳）
-  if(window.WB_Cloud && WB_Cloud.enabled && WB_Cloud.isCloud()){
+  if(!silent && window.WB_Cloud && WB_Cloud.enabled && WB_Cloud.isCloud()){
     WB_Cloud.schedulePush();
   }
 }
@@ -1039,7 +1037,9 @@ function parseHabitLogs(note){
 }
 function normHabit(h){
   if(h==null) return null;
-  if(typeof h==='string') return { id: uid(), title: h, mode:'weekday', weekdays:[], countPerWeek:0, createdAt: todayISO(), note:'' };
+  if(typeof h==='string') return { id: uid(), title: h, mode:'weekday', weekdays:[], countPerWeek:0,
+    createdAt: todayISO(), createdAtFull: '', updatedAt: nowISO(), note:'' };
+  var createdDate = h.createdAt || (h.createdAtFull ? h.createdAtFull.slice(0,10) : '') || todayISO();
   return {
     id: h.id || uid(),
     title: h.title || '',
@@ -1047,7 +1047,9 @@ function normHabit(h){
     mode: (h.mode==='count') ? 'count' : 'weekday',
     weekdays: Array.isArray(h.weekdays) ? h.weekdays.map(Number).filter(function(x){return x>=0&&x<=6;}) : [],
     countPerWeek: parseInt(h.countPerWeek,10) || 0,
-    createdAt: h.createdAt || todayISO()
+    createdAt: createdDate,
+    createdAtFull: h.createdAtFull || '',
+    updatedAt: h.updatedAt || nowISO()
   };
 }
 // 隐藏标记：title 以 __ 开头的系统记录，不出现在任何业务视图/统计
@@ -1170,7 +1172,9 @@ function deleteHabit(id){
 function markHabitDone(id){
   var today = todayISO();
   if(isHabitCompletedOn(id, today)) return;
-  State.habitLogs.push({ habitId: id, date: today, completedAt: nowISO() });
+  var ts = nowISO();
+  State.habitLogs.push({ id: uid(), habitId: id, date: today,
+                         createdAt: ts, updatedAt: ts, completedAt: ts });
   saveHabitsToRecord();
   renderAll();
   toast('已打卡 ✓');
@@ -1264,6 +1268,7 @@ function saveHabitEditor(){
 function addRecord(rec){
   rec.id = rec.id || uid();
   rec.createdAt = rec.createdAt || nowISO();
+  rec.updatedAt = rec.updatedAt || rec.createdAt;
   rec.subtasks = rec.subtasks || [];
   State.records.push(rec);
   saveLocal();
@@ -1273,16 +1278,14 @@ function addRecord(rec){
       .then(function(res){
         var newId = (res && (res.record_id || res.id || res._id)) || rec.id;
         rec.id = newId; saveLocal();
-        setSync('','已同步');
+        // 不在这里亮"已同步"：真正的云端写入由 saveLocal 防抖触发的 pushAll 完成，状态由它负责
         return rec;
       }).catch(function(err){
         console.warn('add failed', err);
-        queueOp('add', rec);
         setSync('offline','离线模式');
         return rec;
       });
   }
-  queueOp('add', rec);
   setSync('offline','离线模式');
   return Promise.resolve(rec);
 }
@@ -1402,12 +1405,16 @@ function reconcileRecurring(){
   if(pruneIds.length || created || touched){
     saveLocal();
     if(window.WB_Cloud && WB_Cloud.enabled && WB_Cloud.isCloud && WB_Cloud.isCloud()){
-      WB_Cloud.pushAll().catch(function(){});
+      WB_Cloud.pushAll(true).catch(function(){});
     }
   }
 }
 
 function updateRecord(rec){
+  // 所有编辑操作的唯一收口：在这里写真实编辑时间，
+  // 云端 updated_at 才有"最后修改时间"语义（之前各 mutation 都不更新时间戳，
+  // 而 pushAll 每轮把 updated_at 刷成同步时刻，导致多端合并时新编辑被旧数据覆盖）
+  rec.updatedAt = nowISO();
   var idx = -1;
   for(var i=0;i<State.records.length;i++){ if(State.records[i].id===rec.id){idx=i;break;} }
   if(idx>=0) State.records[idx] = rec;
@@ -1421,15 +1428,14 @@ function updateRecord(rec){
         .then(function(res){
           var newId = (res && (res.record_id || res.id || res._id)) || rec.id;
           if(newId !== rec.id){ rec.id = newId; if(idx>=0) State.records[idx]=rec; }
-          setSync('','已同步'); saveLocal(); return rec;
+          saveLocal(); return rec;
         })
-        .catch(function(){ queueOp('update', rec); setSync('offline','离线模式'); return rec; });
+        .catch(function(){ setSync('offline','离线模式'); return rec; });
     }
     return db.updateRecord({ databaseId: DATABASE_ID, recordId: rec.id, properties: buildProperties(rec) })
-      .then(function(){ setSync('','已同步'); return rec; })
-      .catch(function(){ queueOp('update', rec); setSync('offline','离线模式'); return rec; });
+      .then(function(){ return rec; })
+      .catch(function(){ setSync('offline','离线模式'); return rec; });
   }
-  queueOp('update', rec);
   return Promise.resolve(rec);
 }
 
@@ -1456,22 +1462,16 @@ function deleteRecord(id){
     } catch(e){}
   }
   saveLocal();
-  // 轻量路径：删除属低频操作，立即推送云端（不等防抖，避免删后立刻刷新导致云端旧数据被拉回）
+  // 轻量路径：删除属低频操作，立即强制推送云端（不等防抖，避免删后立刻刷新导致云端旧数据被拉回）
   if(window.WB_Cloud && WB_Cloud.enabled && WB_Cloud.isCloud()){
-    WB_Cloud.pushAll().catch(function(){});
+    WB_Cloud.pushAll(true).catch(function(){});
   }
   var isServerId = id && id.indexOf('r_')!==0;
   if(db && State.online && isServerId){
     return db.deleteRecord({ databaseId: DATABASE_ID, recordId: id })
-      .catch(function(){ queueOp('delete', {id:id}); });
+      .catch(function(){ /* 离线：本地已移除，恢复网络后由墓碑补推 */ });
   }
-  queueOp('delete', {id:id});
   return Promise.resolve();
-}
-
-function queueOp(op, payload){
-  State.pendingOps.push({ op: op, payload: payload, ts: Date.now() });
-  saveLocal();
 }
 
 /* ============ Helpers for rendering ============ */
@@ -3280,7 +3280,6 @@ function importJSON(file){
         }
       });
       saveLocal();
-      try { localStorage.removeItem(STORAGE_PENDING_KEY); State.pendingOps=[]; } catch(e){}
       renderAll();
       toast('已导入 '+importCount+' 条');
       // 导入后立即主动推送到云端（不等防抖），确保数据先上云再被轮询拉取
@@ -3526,7 +3525,7 @@ function init(){
           renderAll();
           if(syncRes && syncRes.skipped && syncRes.skipped.length){
             try { localStorage.setItem('wb_focusdesk_skipped', JSON.stringify(syncRes.skipped)); } catch(e){}
-            setSync('offline', '已同步（跳过 ' + syncRes.skipped.length + ' 条问题记录，详情见浏览器控制台）');
+            setSync('offline', '同步异常：' + syncRes.skipped.length + ' 条记录未上传，详情见浏览器控制台');
           } else {
             setSync('', user.email + ' · 已同步');
           }
@@ -3543,14 +3542,25 @@ function init(){
           }
           });
           // 多端一致：每 30 秒拉取云端变化并合并 + 页面重新可见时立即同步
+          // 数据签名：内容变更现在都会 bump updatedAt，用 id+时间戳+习惯日志数即可检测
+          var cloudSig = function(){
+            return State.records.map(function(r){
+              return r.id + ':' + (r.updatedAt||'') + ':' + ((r.habitLogs||[]).length);
+            }).join('|');
+          };
           var autoSync = function(){
             if(!window.WB_Cloud || !WB_Cloud.enabled || !WB_Cloud.isCloud() || WB_Cloud.syncing()) return;
             WB_Cloud.fetchAll().then(function(res){
+              var sigBefore = cloudSig();
               mergeCloudRecords(res.records, res.tombstones);
+              if(cloudSig() !== sigBefore){
+                // 拉到了其他设备的变更：立即重绘（含重复任务对账），不再"必须刷新页面"
+                renderAll();
+              }
               WB_Cloud.pushAll().then(function(syncRes){
                 if(syncRes && syncRes.skipped && syncRes.skipped.length){
                   try { localStorage.setItem('wb_focusdesk_skipped', JSON.stringify(syncRes.skipped)); } catch(e){}
-                  setSync('offline','已同步（跳过 ' + syncRes.skipped.length + ' 条问题记录）');
+                  setSync('offline','同步异常：' + syncRes.skipped.length + ' 条记录未上传，详情见控制台');
                 } else { setSync('', '已同步'); }
               }).catch(function(e){ setSync('offline','同步失败：' + (e && e.message ? e.message : '网络错误')); });
             }).catch(function(e){ setSync('offline','同步失败：' + (e && e.message ? e.message : '网络错误')); });
@@ -3559,6 +3569,29 @@ function init(){
           document.addEventListener('visibilitychange', function(){
             if(!document.hidden) autoSync();
           });
+          // 手动同步：点击右上角同步指示器，拉取→合并→渲染→强制推送
+          var syncBox = document.querySelector('.sync');
+          if(syncBox){
+            syncBox.style.cursor = 'pointer';
+            syncBox.title = '点击立即同步';
+            syncBox.addEventListener('click', function(){
+              if(!WB_Cloud.isCloud() || WB_Cloud.syncing()) return;
+              setSync('syncing','同步中...');
+              WB_Cloud.fetchAll().then(function(res){
+                var sigBefore = cloudSig();
+                mergeCloudRecords(res.records, res.tombstones);
+                if(cloudSig() !== sigBefore) renderAll();
+                return WB_Cloud.pushAll(true).then(function(syncRes){
+                  if(syncRes && syncRes.skipped && syncRes.skipped.length){
+                    try { localStorage.setItem('wb_focusdesk_skipped', JSON.stringify(syncRes.skipped)); } catch(e){}
+                    setSync('offline','同步异常：' + syncRes.skipped.length + ' 条记录未上传，详情见控制台');
+                  } else { setSync('', '已同步'); }
+                });
+              }).catch(function(e){
+                setSync('offline','同步失败：' + (e && e.message ? e.message : '网络错误'));
+              });
+            });
+          }
         }).catch(function(err){
           console.warn('cloud fetch failed', err);
           State.online = false;
@@ -3613,6 +3646,9 @@ function mergeCloudRecords(cloudRecs, cloudDels){
 
   var merged = [];
   var added = {};
+  // 本地独有的记录（离线新增未上传）或本地严格新于云端（编辑后未及推送就刷新）：
+  // 合并后需要标脏，随后的 pushAll 才会补推
+  var hasLocalOnly = false;
   // 先遍历本地：每条与云端对比，取更新时间较新的
   State.records.forEach(function(lr){
     if(!lr || !lr.id) return;
@@ -3620,10 +3656,12 @@ function mergeCloudRecords(cloudRecs, cloudDels){
     added[lr.id] = 1;
     var cr = cloudMap[lr.id];
     if(cr){
-      // id 相同：取 updatedAt 较新的那条
+      // id 相同：取 updatedAt 较新的那条；本地严格更新时标脏补推
+      if(recTime(lr) > recTime(cr)) hasLocalOnly = true;
       merged.push(recTime(lr) >= recTime(cr) ? lr : cr);
     } else {
-      // 只有本地有：保留（稍后由 pushAll 推上云端）
+      // 只有本地有：保留并标记待推（稍后由 pushAll 补推上云端）
+      hasLocalOnly = true;
       merged.push(lr);
     }
   });
@@ -3644,7 +3682,8 @@ function mergeCloudRecords(cloudRecs, cloudDels){
   }
 
   State.records = merged;
-  saveLocal();
+  saveLocal(true); // 合并不是本地新编辑：静默保存，不触发防抖推送
+  if(hasLocalOnly && window.WB_Cloud) WB_Cloud.markDirty(); // 本地独有的记录待补推
 }
 
 document.addEventListener('DOMContentLoaded', init);
@@ -4077,9 +4116,23 @@ function bindCalendarEvents(c){
   var localMode = false;
   var pushTimer = null;
   var _syncing = false; // 防重入：轮询/手动/防抖共用同一把锁
+  var localDirty = false; // 本地有无待推变更：无变更时轮询跳过推送，省 egress
   var authedCallbacks = [];
 
-  function nowISO(){ return new Date().toISOString(); }
+  function nowISO(){ return new Date(Date.now() + (window.__wbClockOffset||0)).toISOString(); }
+  // 对一次服务器时钟：LWW 裁决依赖各设备时间戳，校正手机/电脑时钟偏差
+  function syncClock(){
+    if(!supabase) return Promise.resolve();
+    var localBefore = Date.now();
+    return supabase.rpc('server_now').then(function(r){
+      if(r && r.error){ console.warn('[Cloud] clock rpc: ' + r.error.message); return; }
+      var serverMs = Date.parse(r.data);
+      if(isNaN(serverMs)) return;
+      var localAfter = Date.now();
+      // 估算值减去半个往返
+      window.__wbClockOffset = serverMs - (localBefore + localAfter)/2;
+    }).catch(function(e){ console.warn('[Cloud] clock sync failed', e); });
+  }
   function todayStr(){ var d=new Date(); return d.getFullYear()+'-'+String(d.getMonth()+1).padStart(2,'0')+'-'+String(d.getDate()).padStart(2,'0'); }
   function uid(){ return 'r_' + Math.random().toString(36).slice(2,10) + Date.now().toString(36); }
   function ensureSDK(){
@@ -4117,6 +4170,7 @@ function bindCalendarEvents(c){
   function onAuthed(user){
     currentUser = user; localMode = false;
     hideAuth();
+    syncClock();
     authedCallbacks.forEach(function(fn){ try{ fn(user); }catch(e){ console.warn(e); } });
   }
 
@@ -4200,7 +4254,10 @@ function bindCalendarEvents(c){
       progress: 0,
       sort: typeof rec.order === 'number' ? rec.order : 0,
       subtasks: JSON.stringify(rec.subtasks || []),
-      created_at: rec.createdAt || now, updated_at: now, synced_at: now
+      // 时间戳取记录自身：updated_at 是"最后修改时间"，不能每轮同步刷成 now
+      created_at: rec.createdAt || now,
+      updated_at: rec.updatedAt || rec.createdAt || now,
+      synced_at: now
     };
   }
   function taskToRow(rec, userId, now, goalIdByTitle){
@@ -4217,7 +4274,9 @@ function bindCalendarEvents(c){
       completed_at: rec.completedAt || null,
       rec_rule: rec.recRule || '', series_id: rec.seriesId || '', series_seq: rec.seriesSeq || 0,
       rec_skip: rec.recSkip || '[]',
-      created_at: rec.createdAt || now, updated_at: now, synced_at: now
+      created_at: rec.createdAt || now,
+      updated_at: rec.updatedAt || rec.createdAt || now,
+      synced_at: now
     };
   }
   function goalFromRow(g){
@@ -4248,7 +4307,10 @@ function bindCalendarEvents(c){
       weekdays: JSON.stringify(h.weekdays || []),
       note: h.note || '', mode: h.mode === 'count' ? 'count' : 'weekday',
       count_per_week: parseInt(h.countPerWeek, 10) || 0,
-      sort: 0, created_at: now, synced_at: now
+      sort: 0,
+      created_at: h.createdAtFull || h.createdAt || now,
+      updated_at: h.updatedAt || h.createdAtFull || h.createdAt || now,
+      synced_at: now
     };
   }
   function habitFromRow(h){
@@ -4257,7 +4319,9 @@ function bindCalendarEvents(c){
     return { id: h.id, title: h.name || '', note: h.note || '',
       mode: h.mode === 'count' ? 'count' : 'weekday', weekdays: wd,
       countPerWeek: h.count_per_week || 0,
-      createdAt: h.created_at ? h.created_at.slice(0,10) : todayStr() };
+      createdAt: h.created_at ? h.created_at.slice(0,10) : todayStr(),
+      createdAtFull: h.created_at || '',
+      updatedAt: h.updated_at || '' };
   }
 
   /* ---------- 拉取云端 → 本地格式 ---------- */
@@ -4278,12 +4342,34 @@ function bindCalendarEvents(c){
         goals.forEach(function(g){ recs.push(goalFromRow(g)); });
         tasks.forEach(function(t){ recs.push(taskFromRow(t, goalById)); });
         if(habits.length || hlogs.length){
+          // 系统记录的时间戳由实际数据聚合：updatedAt=行内最大更新时间，
+          // createdAt=行内最小创建时间。绝不能用本次 fetch 时刻，
+          // 否则云端版本在合并中永远"最新"，会抹掉本机尚未上传的打卡。
+          var latestTick = 0, earliestTick = 0, stamp = function(v){
+            var t = Date.parse(v); return isNaN(t) ? 0 : t;
+          };
+          habits.forEach(function(h){
+            latestTick = Math.max(latestTick, stamp(h.updated_at), stamp(h.created_at));
+            var c = stamp(h.created_at);
+            if(c && (!earliestTick || c < earliestTick)) earliestTick = c;
+          });
+          hlogs.forEach(function(l){
+            latestTick = Math.max(latestTick, stamp(l.updated_at), stamp(l.created_at));
+            var c2 = stamp(l.created_at);
+            if(c2 && (!earliestTick || c2 < earliestTick)) earliestTick = c2;
+          });
           recs.push({
             id: '__focusdesk_habits__', title: '__focusdesk_habits__', type: '任务', status: '待处理',
             note: '', subtasks: [],
             habits: habits.map(habitFromRow),
-            habitLogs: hlogs.map(function(l){ return { habitId: l.habit_id, date: l.log_date, completedAt: l.completed_at || '' }; }),
-            createdAt: nowISO(), order: 0
+            habitLogs: hlogs.map(function(l){
+              return { id: l.id, habitId: l.habit_id, date: l.log_date,
+                       createdAt: l.created_at || '', updatedAt: l.updated_at || '',
+                       completedAt: l.completed_at || '' };
+            }),
+            createdAt: earliestTick ? new Date(earliestTick).toISOString() : nowISO(),
+            updatedAt: latestTick ? new Date(latestTick).toISOString() : nowISO(),
+            order: 0
           });
         }
         return { records: recs, tombstones: (rs[4] && rs[4].data) || [] };
@@ -4320,10 +4406,12 @@ function bindCalendarEvents(c){
   }
 
   /* ---------- 全量 reconcile（本地 ⇄ 云端双向对齐） ----------
-   * 覆盖：新增/修改（upsert）+ 删除（云端有本地无 → 删）+ 导入替换
-   * habit_logs：RLS 无 UPDATE 策略 → 按习惯"删全量再重插"，避免冲突与重复 */
-  function pushAll(){
+   * 新增/修改：upsert（时间戳为真实编辑时间）；删除：只执行本地/云端墓碑里的 id；
+   * habit_logs：稳定 id upsert；localDirty 闸门使无变更的轮询跳过推送。 */
+  function pushAll(force){
     if(!currentUser || !supabase) return Promise.resolve();
+    // 非强制且本地无变更 → 跳过（轮询场景）；删除/对账/手动入口传 force=true
+    if(!force && !localDirty) return Promise.resolve({ skipped: [] });
     if(_syncing) return Promise.resolve(); // 防重入：已有同步在进行，跳过本次
     _syncing = true;
     var u = currentUser.id;
@@ -4426,7 +4514,7 @@ function bindCalendarEvents(c){
           // 本地没有这条记录：保留墓碑，什么都不做
         });
         if(needRender){
-          try { if(sysRec) { State.habits = sysRec.habits || []; State.habitLogs = sysRec.habitLogs || []; } saveLocal(); } catch(e){}
+          try { if(sysRec) { State.habits = sysRec.habits || []; State.habitLogs = sysRec.habitLogs || []; } saveLocal(true); } catch(e){}
         }
         return Promise.all(dels).then(function(delRs){ return { delRs: delRs, tbOK: tbOK, tbRestore: tbRestore }; });
       })
@@ -4468,17 +4556,15 @@ function bindCalendarEvents(c){
       .then(function(skipped){
         if(!sysRec) return { skipped: skipped };
         var logs = hlogs.map(function(l){
-          return { id: uid(), user_id: u, habit_id: l.habitId, log_date: l.date,
-                   created_at: now, synced_at: now, completed_at: l.completedAt || null };
+          var createdTick = l.createdAt || l.completedAt || now;
+          return { id: l.id || uid(), user_id: u, habit_id: l.habitId, log_date: l.date,
+                   created_at: createdTick, updated_at: l.updatedAt || createdTick,
+                   synced_at: now, completed_at: l.completedAt || null };
         });
         if(!logs.length) return Promise.resolve();
-        var habitIds = {};
-        logs.forEach(function(l){ habitIds[l.habit_id] = 1; });
-        var p = Promise.resolve();
-        Object.keys(habitIds).forEach(function(hid){
-          p = p.then(function(){ return supabase.from('fd_habit_logs').delete().eq('user_id', u).eq('habit_id', hid); });
-        });
-        return p.then(function(){ return supabase.from('fd_habit_logs').insert(logs); })
+        // 稳定 id + upsert：不再"删全量再重插"——离线设备重连时那会删掉其他设备刚上传的日志。
+        // fd_habit_logs 已有 UPDATE RLS，upsert 可行。
+        return supabase.from('fd_habit_logs').upsert(logs, { onConflict: 'id' })
           .then(function(r2){ if(r2 && r2.error) throw new Error(r2.error.message); return { skipped: skipped }; });
       })
       .then(function(r){
@@ -4486,13 +4572,14 @@ function bindCalendarEvents(c){
         if(needRender && typeof renderAll === 'function'){ try { renderAll(); } catch(e){} }
         return r;
       })
-      .then(function(){ _syncing = false; })
+      .then(function(){ _syncing = false; localDirty = false; })
       .catch(function(e){ _syncing = false; throw e; });
   }
 
   /* ---------- 保存挂钩：变更后防抖全量推送 ---------- */
   function schedulePush(){
     if(!currentUser || localMode) return;
+    localDirty = true; // saveLocal 调用即代表本地有变更待推
     if(pushTimer) clearTimeout(pushTimer);
     pushTimer = setTimeout(function(){
       pushTimer = null;
@@ -4500,7 +4587,7 @@ function bindCalendarEvents(c){
       pushAll().then(function(syncRes){
           if(syncRes && syncRes.skipped && syncRes.skipped.length){
             try { localStorage.setItem('wb_focusdesk_skipped', JSON.stringify(syncRes.skipped)); } catch(e){}
-            setSync('offline','已同步（跳过 ' + syncRes.skipped.length + ' 条问题记录，详情见控制台）');
+            setSync('offline','同步异常：' + syncRes.skipped.length + ' 条记录未上传，详情见控制台');
           } else { setSync('', '已同步'); }
         })
         .catch(function(e){
@@ -4525,6 +4612,7 @@ function bindCalendarEvents(c){
     fetchAll: fetchAll,
     pushAll: pushAll,
     schedulePush: schedulePush,
+    markDirty: function(){ localDirty = true; },
     syncing: function(){ return _syncing; },
     signOut: signOut,
     user: function(){ return currentUser; },
