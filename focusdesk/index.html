@@ -3514,9 +3514,62 @@ function init(){
       if(user){
         db = WB_Cloud.db;
         State.online = true;
+        // 多端一致：每 30 秒拉取云端变化并合并 + 页面重新可见时立即同步
+        // 数据签名：内容变更现在都会 bump updatedAt，用 id+时间戳+习惯日志数即可检测
+        var cloudSig = function(){
+          return State.records.map(function(r){
+            return r.id + ':' + (r.updatedAt||'') + ':' + ((r.habitLogs||[]).length);
+          }).join('|');
+        };
+        var autoSync = function(){
+          if(!window.WB_Cloud || !WB_Cloud.enabled || !WB_Cloud.isCloud() || WB_Cloud.syncing()) return;
+          WB_Cloud.fetchAll().then(function(res){
+            var sigBefore = cloudSig();
+            mergeCloudRecords(res.records, res.tombstones);
+            if(cloudSig() !== sigBefore){
+              // 拉到了其他设备的变更：立即重绘（含重复任务对账），不再"必须刷新页面"
+              renderAll();
+            }
+            WB_Cloud.pushAll().then(function(syncRes){
+              if(syncRes && syncRes.skipped && syncRes.skipped.length){
+                try { localStorage.setItem('wb_focusdesk_skipped', JSON.stringify(syncRes.skipped)); } catch(e){}
+                setSync('offline','同步异常：' + syncRes.skipped.length + ' 条记录未上传，详情见控制台');
+              } else { setSync('', '已同步'); }
+            }).catch(function(e){ setSync('offline','同步失败：' + (e && e.message ? e.message : '网络错误')); });
+          }).catch(function(e){ setSync('offline','同步失败：' + (e && e.message ? e.message : '网络错误')); });
+        };
+        // 同步器在"确认登录"后立即绑定：即使首次拉取失败，轮询和手动点击仍然可用，
+        // （旧代码把绑定放在拉取成功分支，首拉失败后指示器变成死按钮只能刷新页面）
+        setInterval(autoSync, 30000);
+        document.addEventListener('visibilitychange', function(){
+          if(!document.hidden) autoSync();
+        });
+        // 手动同步：点击右上角同步指示器，拉取→合并→渲染→强制推送
+        var syncBox = document.querySelector('.sync');
+        if(syncBox){
+          syncBox.style.cursor = 'pointer';
+          syncBox.title = '点击立即同步';
+          syncBox.addEventListener('click', function(){
+            if(!WB_Cloud.isCloud() || WB_Cloud.syncing()) return;
+            setSync('syncing','同步中...');
+            WB_Cloud.fetchAll().then(function(res){
+              var sigBefore = cloudSig();
+              mergeCloudRecords(res.records, res.tombstones);
+              if(cloudSig() !== sigBefore) renderAll();
+              return WB_Cloud.pushAll(true).then(function(syncRes){
+                if(syncRes && syncRes.skipped && syncRes.skipped.length){
+                  try { localStorage.setItem('wb_focusdesk_skipped', JSON.stringify(syncRes.skipped)); } catch(e){}
+                  setSync('offline','同步异常：' + syncRes.skipped.length + ' 条记录未上传，详情见控制台');
+                } else { setSync('', '已同步'); }
+              });
+            }).catch(function(e){
+              setSync('offline','同步失败：' + (e && e.message ? e.message : '网络错误'));
+            });
+          });
+        }
         setSync('syncing','同步中...');
         WB_Cloud.fetchAll().then(function(res){
-          // 合并：云端优先，本地独有记录保留（稍后由 reconcile 补推上云）
+          // 合并：按真实 updatedAt 取新版本，本地独有记录保留（稍后由 pushAll 补推上云）
           mergeCloudRecords(res.records, res.tombstones);
           return WB_Cloud.pushAll().then(function(syncRes){
           State.loaded = true;
@@ -3541,61 +3594,10 @@ function init(){
             foot.appendChild(out);
           }
           });
-          // 多端一致：每 30 秒拉取云端变化并合并 + 页面重新可见时立即同步
-          // 数据签名：内容变更现在都会 bump updatedAt，用 id+时间戳+习惯日志数即可检测
-          var cloudSig = function(){
-            return State.records.map(function(r){
-              return r.id + ':' + (r.updatedAt||'') + ':' + ((r.habitLogs||[]).length);
-            }).join('|');
-          };
-          var autoSync = function(){
-            if(!window.WB_Cloud || !WB_Cloud.enabled || !WB_Cloud.isCloud() || WB_Cloud.syncing()) return;
-            WB_Cloud.fetchAll().then(function(res){
-              var sigBefore = cloudSig();
-              mergeCloudRecords(res.records, res.tombstones);
-              if(cloudSig() !== sigBefore){
-                // 拉到了其他设备的变更：立即重绘（含重复任务对账），不再"必须刷新页面"
-                renderAll();
-              }
-              WB_Cloud.pushAll().then(function(syncRes){
-                if(syncRes && syncRes.skipped && syncRes.skipped.length){
-                  try { localStorage.setItem('wb_focusdesk_skipped', JSON.stringify(syncRes.skipped)); } catch(e){}
-                  setSync('offline','同步异常：' + syncRes.skipped.length + ' 条记录未上传，详情见控制台');
-                } else { setSync('', '已同步'); }
-              }).catch(function(e){ setSync('offline','同步失败：' + (e && e.message ? e.message : '网络错误')); });
-            }).catch(function(e){ setSync('offline','同步失败：' + (e && e.message ? e.message : '网络错误')); });
-          };
-          setInterval(autoSync, 30000);
-          document.addEventListener('visibilitychange', function(){
-            if(!document.hidden) autoSync();
-          });
-          // 手动同步：点击右上角同步指示器，拉取→合并→渲染→强制推送
-          var syncBox = document.querySelector('.sync');
-          if(syncBox){
-            syncBox.style.cursor = 'pointer';
-            syncBox.title = '点击立即同步';
-            syncBox.addEventListener('click', function(){
-              if(!WB_Cloud.isCloud() || WB_Cloud.syncing()) return;
-              setSync('syncing','同步中...');
-              WB_Cloud.fetchAll().then(function(res){
-                var sigBefore = cloudSig();
-                mergeCloudRecords(res.records, res.tombstones);
-                if(cloudSig() !== sigBefore) renderAll();
-                return WB_Cloud.pushAll(true).then(function(syncRes){
-                  if(syncRes && syncRes.skipped && syncRes.skipped.length){
-                    try { localStorage.setItem('wb_focusdesk_skipped', JSON.stringify(syncRes.skipped)); } catch(e){}
-                    setSync('offline','同步异常：' + syncRes.skipped.length + ' 条记录未上传，详情见控制台');
-                  } else { setSync('', '已同步'); }
-                });
-              }).catch(function(e){
-                setSync('offline','同步失败：' + (e && e.message ? e.message : '网络错误'));
-              });
-            });
-          }
         }).catch(function(err){
           console.warn('cloud fetch failed', err);
           State.online = false;
-          setSync('offline','云端连接失败，本地模式');
+          setSync('offline','云端连接失败，点击同步指示器可重试');
         });
       } else {
         // 本地模式（未登录 / 点了本地模式）
