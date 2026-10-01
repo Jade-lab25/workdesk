@@ -583,6 +583,11 @@ input:focus, textarea:focus { outline: none; }
           <label class="form-label">专注目标</label>
           <input class="form-input" id="logFocusGoal" placeholder="专注目标（分钟，可选，如 50）" type="number" min="0" step="1">
         </div>
+        <div class="form-group">
+          <label class="form-label">实际专注</label>
+          <input class="form-input" id="logFocusActual" placeholder="实际专注（分钟，可后补；被中断就分次记）" type="number" min="0" step="1">
+          <div id="logFocusSegHint" style="display:none; font-size:12px; color:#86909c; margin-top:6px"></div>
+        </div>
         <div data-page-node-id="enLFt8zFNIKbuvkWfg7BM5" class="form-group">
           <label data-page-node-id="A9PFnUUudm9MkkDPoLoRcF" class="form-label"><!--pnid:OnhBfWNkj85VHBF02uwu8A-->结果</label>
           <textarea data-page-node-id="Zvyg0VLRDe4RyAhsPxWBgc" class="form-textarea" id="logResult" rows="3" placeholder="成果描述（完成后再填；只写事项就保存，会自动标记为「进行中」）"></textarea>
@@ -1970,7 +1975,9 @@ var App = (function () {
           toast("已删除");
           renderIdeas();
         } else if (act === "tolog") {
-          // 转日志：预填事项
+          // 转日志：预填事项。先清空表单，否则会把上一次"载入编辑"残留的
+          // 专注目标/实际值带进这条新草稿
+          resetLogForm();
           var matter = item.content.split("\n")[0].slice(0, 50);
           switchTab("log");
           $("#logMatter").value = matter;
@@ -2018,9 +2025,29 @@ var App = (function () {
     $("#logDateText").textContent = label;
   }
 
-  // 编辑态：loadLogToForm 载入时暂存原实际专注值，saveLog 保存后清掉
-  // （编辑走"删旧条+新保存"，不暂存的话先回填专注再补结果会把实际值清空）
-  var editingFocusActual = null;
+  /* ---------- 分段专注 ----------
+   * focusSessions = [{m: 分钟数, t: ISO 时间}]，focusActual = 各段之和（派生值，冗余存一份给老逻辑用）
+   * 老数据可能只有 focusActual 没有 focusSessions，取值时两者都要兼容
+   */
+  function focusSegsOf(item) {
+    var s = item && item.focusSessions;
+    return Array.isArray(s) ? s : [];
+  }
+  // 实际专注总分钟数：有分段就求和，否则退回老的 focusActual 字段
+  function focusTotalOf(item) {
+    var segs = focusSegsOf(item);
+    if (segs.length) return segs.reduce(function (a, x) { return a + (x.m || 0); }, 0);
+    return item && item.focusActual != null ? item.focusActual : null;
+  }
+  function segHintText(segs) {
+    if (!segs || segs.length < 2) return "";
+    return "当前分段：" + segs.map(function (x) { return x.m || 0; }).join(" + ") +
+      " 分钟（" + segs.length + " 段）";
+  }
+
+  // 编辑态：loadLogToForm 载入时暂存原分段，saveLog 保存后清掉
+  // （编辑走"删旧条+新保存"，不暂存的话先回填专注再补结果会把分段清空）
+  var editingFocusSessions = [];
   function saveLog() {
     var matter = $("#logMatter").value.trim();
     var result = $("#logResult").value.trim();
@@ -2028,7 +2055,17 @@ var App = (function () {
     var issue = $("#logIssue").value.trim();
     var goal = parseInt($("#logFocusGoal").value, 10);
     if (!(goal > 0)) goal = 0; // 非正整数 / 留空 = 本条没定目标
+    var total = parseInt($("#logFocusActual").value, 10);
+    if (!(total > 0)) total = null;
     if (!matter) { toast("请填写事项"); return; }
+    // 分段裁决：总数没变 → 沿用原分段（只是改了别的字段）；总数被手动改了 → 折叠成一段
+    var segs = [];
+    if (total != null) {
+      var oldSum = editingFocusSessions.reduce(function (a, x) { return a + (x.m || 0); }, 0);
+      segs = (editingFocusSessions.length && oldSum === total)
+        ? editingFocusSessions
+        : [{ m: total, t: new Date().toISOString() }];
+    }
     // 有结果 = 已完成；只写了事项 = 进行中（承诺锚点）
     // 等待反馈 / 取消 不走表单，由卡片上的按钮直接切换
     var log = {
@@ -2038,10 +2075,11 @@ var App = (function () {
       data: data || "无",
       issue: issue || "无",
       focusGoal: goal,
-      focusActual: editingFocusActual,
+      focusActual: total,
+      focusSessions: segs,
       status: result ? "done" : "doing"
     };
-    editingFocusActual = null;
+    editingFocusSessions = [];
     var rid = "log:" + uid();
     Store.put(rid, "log", matter, log);
     $("#logMatter").value = "";
@@ -2049,17 +2087,23 @@ var App = (function () {
     $("#logData").value = "";
     $("#logIssue").value = "";
     $("#logFocusGoal").value = "";
+    $("#logFocusActual").value = "";
+    $("#logFocusSegHint").textContent = "";
+    $("#logFocusSegHint").style.display = "none";
     toast("已记录");
     renderLogs();
   }
 
   function resetLogForm() {
-    editingFocusActual = null;
+    editingFocusSessions = [];
     $("#logMatter").value = "";
     $("#logResult").value = "";
     $("#logData").value = "";
     $("#logIssue").value = "";
     $("#logFocusGoal").value = "";
+    $("#logFocusActual").value = "";
+    $("#logFocusSegHint").textContent = "";
+    $("#logFocusSegHint").style.display = "none";
   }
 
   var LOG_STATUS_BADGE = {
@@ -2091,7 +2135,8 @@ var App = (function () {
       date: item.date, matter: item.matter,
       result: item.result || "无", data: item.data || "无", issue: item.issue || "无",
       focusGoal: item.focusGoal || 0,
-      focusActual: item.focusActual == null ? null : item.focusActual,
+      focusActual: focusTotalOf(item),
+      focusSessions: focusSegsOf(item),
       status: status, created_at: item.created_at // 状态变更不改创建时间
     });
     toast(LOG_STATUS_TOAST[status] || "状态已更新");
@@ -2112,7 +2157,12 @@ var App = (function () {
     $("#logData").value = item.data && item.data !== "无" ? item.data : "";
     $("#logIssue").value = item.issue && item.issue !== "无" ? item.issue : "";
     $("#logFocusGoal").value = item.focusGoal || "";
-    editingFocusActual = item.focusActual == null ? null : item.focusActual;
+    var total = focusTotalOf(item);
+    $("#logFocusActual").value = total == null ? "" : total;
+    editingFocusSessions = focusSegsOf(item);
+    var hint = segHintText(editingFocusSessions);
+    $("#logFocusSegHint").textContent = hint;
+    $("#logFocusSegHint").style.display = hint ? "block" : "none";
     Store.del(rid);
     toast("已载入编辑，保存将生成新记录");
     window.scrollTo({ top: 0, behavior: "smooth" });
@@ -2122,22 +2172,34 @@ var App = (function () {
   // 专注信息一行（卡片、日历共用）；无目标且无实际值时返回空串
   function focusLine(l) {
     var goal = l.focusGoal || 0;
-    var actual = l.focusActual == null ? null : l.focusActual;
+    var actual = focusTotalOf(l);
+    var segs = focusSegsOf(l);
+    // 只有真正分了多段才显示段数，单段/老数据不显示，避免噪音
+    var segPart = segs.length >= 2 ? "（" + segs.length + " 段）" : "";
     if (!goal && actual == null) return "";
     if (goal && actual == null) return "🎯 目标 " + goal + " 分钟（待记录）";
-    if (goal) return "🎯 专注 " + actual + "/" + goal + " 分钟 · " + (actual >= goal ? "已达成" : "未达成");
-    return "🎯 专注 " + actual + " 分钟";
+    if (goal) return "🎯 专注 " + actual + "/" + goal + " 分钟" + segPart + " · " + (actual >= goal ? "已达成" : "未达成");
+    return "🎯 专注 " + actual + " 分钟" + segPart;
   }
 
-  // 卡片上快速回填实际专注分钟数，只动 focusActual，其他字段不动
-  function fillFocusActual(rid, minutes) {
+  // 追加一段专注（被中断后可以接着记），总数自动累加；其他字段不动
+  function addFocusSession(rid, minutes) {
     var item = Store.get(rid);
-    if (!item) return;
+    if (!item) return null;
+    var segs = focusSegsOf(item);
+    // 老数据只有总时长、没有分段：先把已记的时长当成第 1 段，
+    // 否则追加时会把它冲掉（25 分钟 + 新记 10 分钟 应该 = 35）
+    if (!segs.length && item.focusActual != null) {
+      segs = [{ m: item.focusActual, t: item.created_at || new Date().toISOString() }];
+    }
+    segs = segs.concat([{ m: minutes, t: new Date().toISOString() }]);
+    var total = segs.reduce(function (a, x) { return a + (x.m || 0); }, 0);
     Store.put(rid, "log", item.matter, Object.assign({}, item, {
-      focusActual: minutes,
+      focusActual: total, focusSessions: segs,
       created_at: item.created_at // 回填不改创建时间
     }));
     renderLogs();
+    return total;
   }
 
   function renderLogs() {
@@ -2156,10 +2218,10 @@ var App = (function () {
         var badge = (st === "doing" && item.date > today())
           ? '<span class="log-status planned">📅 计划中</span>'
           : LOG_STATUS_BADGE[st];
-        // 记专注按钮：实际时长未回填时，进行中或定了目标的卡片都可回填
-        // （核心路径是"任务完成后再记录"：补结果后卡片变已完成仍需能填）
+        // 记专注按钮：有目标或进行中的卡片一直可记，可反复点、每次往上累加
+        // （被打断后要能接着记，所以不做"记过一次就收起"）
         var baseActs = (LOG_STATUS_ACTS[st] || LOG_STATUS_ACTS.done).slice();
-        if (st !== "cancelled" && item.focusActual == null && (item.focusGoal || st === "doing")) {
+        if (st !== "cancelled" && (item.focusGoal || st === "doing")) {
           baseActs.unshift(["focus", "记专注"]);
         }
         var acts = baseActs.map(function (a) {
@@ -2194,12 +2256,24 @@ var App = (function () {
           toast("已删除");
           renderLogs();
         } else if (act === "focus") {
-          var ans = prompt("本次实际专注了多少分钟？（只填数字）");
+          var it = Store.get(rid);
+          var goal = (it && it.focusGoal) || 0;
+          var done = it ? focusTotalOf(it) : null;
+          var tip = "本次专注了多少分钟？（只填数字）";
+          if (goal && done != null) {
+            tip = "本次专注了多少分钟？（已记 " + done + " / 目标 " + goal +
+              (done < goal ? "，还差 " + (goal - done) : "，已超额") + "）";
+          } else if (goal) {
+            tip = "本次专注了多少分钟？（目标 " + goal + " 分钟）";
+          } else if (done != null) {
+            tip = "本次专注了多少分钟？（已记 " + done + " 分钟）";
+          }
+          var ans = prompt(tip);
           if (ans === null) return;
           var minutes = parseInt(ans, 10);
           if (!(minutes > 0)) { toast("请填写大于 0 的分钟数"); return; }
-          fillFocusActual(rid, minutes);
-          toast("已记录专注 " + minutes + " 分钟");
+          var total = addFocusSession(rid, minutes);
+          toast("已记 " + minutes + " 分钟，累计 " + total + " 分钟");
         } else if (act === "edit") {
           loadLogToForm(rid, false);
         } else {
@@ -2384,10 +2458,15 @@ var App = (function () {
         var statusLine = st === "doing" ? "\n【状态】进行中，尚未完成"
           : st === "waiting" ? "\n【状态】已提交，等待反馈" : "";
         var goal = l.focusGoal || 0;
-        var actual = l.focusActual == null ? null : l.focusActual;
+        var actual = focusTotalOf(l);
+        var segs = focusSegsOf(l);
+        var segPart = segs.length >= 2
+          ? "，分 " + segs.length + " 段：" + segs.map(function (x) { return x.m || 0; }).join("+") + " 分钟"
+          : "";
         var focusPart = (goal || actual != null)
           ? "\n【专注】" + (goal ? "目标 " + goal + " 分钟" : "未设定目标") +
-            (actual != null ? " / 实际 " + actual + " 分钟" + (goal ? (actual >= goal ? "（已达成）" : "（未达成）") : "") : "")
+            (actual != null ? " / 实际 " + actual + " 分钟" +
+              (goal ? (actual >= goal ? "（已达成" : "（未达成") + segPart + "）" : (segPart ? "（" + segPart.slice(1) + "）" : "")) : "")
           : "";
         sources.push({ type: "log", rid: l.__rid, title: l.matter, date: l.date,
           text: "【事项】" + l.matter + "\n【结果】" + (l.result || "无") +
@@ -2457,11 +2536,12 @@ var App = (function () {
   // 汇总日期范围内的专注数据，供 AI 写【专注状态】一节；无专注数据返回 ""
   function focusSummaryText(start, end) {
     var n = 0, goalCount = 0, sumGoal = 0, filled = 0, sumActual = 0, met = 0;
+    var segEntries = 0, segCount = 0, segSum = 0, segMax = 0;
     Store.list("log").forEach(function (l) {
       if ((l.status || "done") === "cancelled") return;
       if (l.date < start || l.date > end) return;
       var goal = l.focusGoal || 0;
-      var actual = l.focusActual == null ? null : l.focusActual;
+      var actual = focusTotalOf(l);
       if (!goal && actual == null) return;
       n++;
       if (goal) { goalCount++; sumGoal += goal; }
@@ -2469,12 +2549,26 @@ var App = (function () {
         filled++; sumActual += actual;
         if (goal && actual >= goal) met++;
       }
+      var segs = focusSegsOf(l);
+      if (segs.length) {
+        segEntries++; segCount += segs.length;
+        segs.forEach(function (x) {
+          var m = x.m || 0;
+          segSum += m;
+          if (m > segMax) segMax = m;
+        });
+      }
     });
     if (!n) return "";
+    var segLine = segEntries
+      ? "有分段记录 " + segEntries + " 条，共 " + segCount + " 段，单段平均 " +
+        Math.round(segSum / segCount) + " 分钟，最长单段 " + segMax + " 分钟。"
+      : "";
     return "【本期专注数据汇总】\n" +
       "有专注记录的条目 " + n + " 条；其中设定目标 " + goalCount +
       " 条，目标总时长 " + sumGoal + " 分钟；已回填实际时长 " + filled +
-      " 条，实际专注总时长 " + sumActual + " 分钟；达成目标 " + met + " 条。";
+      " 条，实际专注总时长 " + sumActual + " 分钟；达成目标 " + met + " 条。" +
+      (segLine ? "\n" + segLine : "");
   }
 
   function buildPrompt(sources, tplCode, range) {
@@ -2513,7 +2607,8 @@ var App = (function () {
 
     var focusReq =
       "另起一节【专注状态】：基于本期专注数据汇总，写明目标达成率与实际专注总时长，" +
-      "点评专注质量并给出 1-2 条具体改进建议；本期无专注数据则省略该节。";
+      "若有分段记录则点评专注的连续性（是否频繁被打断、单段时长是否偏短），" +
+      "给出 1-2 条具体改进建议；本期无专注数据则省略该节。";
 
     if (includeGrowth && materialGrowth) {
       userPrompt +=
@@ -3290,14 +3385,24 @@ var App = (function () {
       data: d.data || '无', issue: d.issue || '无',
       focus_goal: d.focusGoal || 0,
       focus_actual: d.focusActual == null ? null : d.focusActual,
+      focus_sessions: (Array.isArray(d.focusSessions) && d.focusSessions.length) ? d.focusSessions : null,
       status: d.status || 'done',
       created_at: d.created_at || rec.updated_at || now,
       updated_at: rec.updated_at || d.created_at || now,
       synced_at: now
     };
   }
+  // JSONB 列正常情况下 PostgREST 已解析成数组，但字符串也兼容一下
+  function parseSegs(v){
+    if(!v) return [];
+    if(Array.isArray(v)) return v;
+    if(typeof v === 'string'){
+      try { var a = JSON.parse(v); return Array.isArray(a) ? a : []; } catch(e){ return []; }
+    }
+    return [];
+  }
   function recFromLogRow(row){
-    var d = { date: row.date || '', matter: row.matter || '', result: row.result || '', data: row.data || '', issue: row.issue || '', focusGoal: row.focus_goal || 0, focusActual: row.focus_actual == null ? null : row.focus_actual, status: row.status || 'done', created_at: row.created_at || '' };
+    var d = { date: row.date || '', matter: row.matter || '', result: row.result || '', data: row.data || '', issue: row.issue || '', focusGoal: row.focus_goal || 0, focusActual: row.focus_actual == null ? null : row.focus_actual, focusSessions: parseSegs(row.focus_sessions), status: row.status || 'done', created_at: row.created_at || '' };
     return {
       rid: row.id, type: 'log', title: row.matter || '',
       data: JSON.stringify(d),
