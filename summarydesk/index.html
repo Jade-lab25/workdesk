@@ -2143,6 +2143,27 @@ var App = (function () {
     renderLogs();
   }
 
+  // 遗留任务一键顺延到今天：只改日期，事项/结果草稿/专注数据全部带走，状态保持进行中
+  function postponeLog(rid) {
+    var item = Store.get(rid);
+    if (!item) return;
+    Store.put(rid, "log", item.matter, {
+      date: today(), matter: item.matter,
+      result: item.result || "无", data: item.data || "无", issue: item.issue || "无",
+      focusGoal: item.focusGoal || 0,
+      focusActual: focusTotalOf(item),
+      focusSessions: focusSegsOf(item),
+      status: "doing", created_at: item.created_at // 顺延不改创建时间
+    });
+    // 从历史日期页顺延时，跳回今天让用户看到卡片
+    if (currentDate !== today()) {
+      currentDate = today();
+      updateLogDateText();
+    }
+    toast("已顺延到今天");
+    renderLogs();
+  }
+
   // 把某条日志载入表单（沿用"删旧条、保存即新条"的编辑方式）
   // fromBanner=true 时可能来自其他日期，先跳转到那条记录的日期
   function loadLogToForm(rid, fromBanner) {
@@ -2224,6 +2245,10 @@ var App = (function () {
         if (st !== "cancelled" && (item.focusGoal || st === "doing")) {
           baseActs.unshift(["focus", "记专注"]);
         }
+        // 过去日期的进行中任务：可以直接顺延到今天（插在"补结果"之后）
+        if (st === "doing" && currentDate < today()) {
+          baseActs.splice(baseActs[0][0] === "focus" ? 2 : 1, 0, ["postpone", "顺延到今天"]);
+        }
         var acts = baseActs.map(function (a) {
           return '<span class="log-act' + (a[0] === "delete" || a[0] === "cancelled" ? " danger" : "") +
             '" data-act="' + a[0] + '" data-rid="' + item.__rid + '">' + a[1] + '</span>';
@@ -2276,6 +2301,8 @@ var App = (function () {
           toast("已记 " + minutes + " 分钟，累计 " + total + " 分钟");
         } else if (act === "edit") {
           loadLogToForm(rid, false);
+        } else if (act === "postpone") {
+          postponeLog(rid);
         } else {
           setLogStatus(rid, act);
         }
@@ -2333,14 +2360,14 @@ var App = (function () {
         '</span>' +
         '<button class="focus-btn" data-focus="edit" data-rid="' + l.__rid + '">补结果</button></div>';
     }
-    if (legacy.length) {
-      var l2 = legacy[0];
+    legacy.forEach(function (l2) {
       html += '<div class="focus-row focus-warn-row"><span>⚠️</span>' +
-        '<span class="focus-text">遗留 ' + legacy.length + ' 项：<b>' +
+        '<span class="focus-text">遗留：<b>' +
         esc(shortDateLabel(l2.date)) + ' ' + firstLine(l2.matter, 20) + '</b></span>' +
         '<button class="focus-btn" data-focus="edit" data-rid="' + l2.__rid + '">补结果</button>' +
+        '<button class="focus-btn" data-focus="postpone" data-rid="' + l2.__rid + '">顺延到今天</button>' +
         '<button class="focus-btn focus-btn-gray" data-focus="cancel" data-rid="' + l2.__rid + '">取消</button></div>';
-    }
+    });
     if (waiting.length) {
       var l3 = waiting[0];
       html += '<div class="focus-row focus-wait-row"><span>⏸</span>' +
@@ -2356,6 +2383,8 @@ var App = (function () {
         var rid = b.dataset.rid;
         if (b.dataset.focus === "cancel") {
           setLogStatus(rid, "cancelled");
+        } else if (b.dataset.focus === "postpone") {
+          postponeLog(rid);
         } else {
           loadLogToForm(rid, true);
         }
