@@ -402,8 +402,19 @@ input:focus, textarea:focus { outline: none; }
   display: flex; justify-content: space-between; align-items: center;
 }
 .history-item:hover { background: #fafbfc; }
+.history-item.selected { background: #f2f6ff; border-color: #3370ff; }
 .history-item .h-title { font-size: 13px; font-weight: 500; color: #1f2329; }
 .history-item .h-meta { font-size: 11px; color: #86909c; margin-top: 2px; }
+.history-item .h-main { flex: 1; min-width: 0; }
+.rpt-check { margin: 0 10px 0 2px; flex: none; cursor: pointer; }
+
+/* 历史报告工具条（筛选 / 多选 / 导出 / 复盘） */
+.report-tools { margin-top: 10px; }
+.report-chips { display: flex; gap: 6px; flex-wrap: wrap; margin-bottom: 8px; }
+.report-date-row { display: flex; align-items: center; gap: 8px; margin-bottom: 8px; }
+.report-date-row .form-input { flex: 1; min-width: 0; }
+.report-tool-row { display: flex; align-items: center; gap: 8px; flex-wrap: wrap; margin: 10px 0 6px; }
+.report-count { font-size: 12px; color: #86909c; margin-right: auto; }
 
 /* ===== Settings Panel (LLM) ===== */
 .settings-panel {
@@ -648,6 +659,33 @@ input:focus, textarea:focus { outline: none; }
 
       <div data-page-node-id="5W2aOyWTqgLmUnY1DFx19C" class="history-list" id="historyList">
         <div data-page-node-id="YCoyONoA9Rawhm8X5QVQck" class="sum-section-title" style="margin-top:20px"><!--pnid:LRjaaTZAF0nMYt49Uf1Yu6-->历史报告</div>
+        <div class="report-tools">
+          <input class="form-input" id="rptKeyword" placeholder="🔍 搜索标题或正文" style="margin-bottom:8px">
+          <div class="report-chips" id="rptKindChips">
+            <span class="dir-chip active" data-kind="">全部类型</span>
+            <span class="dir-chip" data-kind="daily">日报</span>
+            <span class="dir-chip" data-kind="weekly">周报</span>
+            <span class="dir-chip" data-kind="custom">总结</span>
+          </div>
+          <div class="report-chips" id="rptQuickChips">
+            <span class="dir-chip active" data-quick="all">全部时间</span>
+            <span class="dir-chip" data-quick="30">近30天</span>
+            <span class="dir-chip" data-quick="month">本月</span>
+            <span class="dir-chip" data-quick="90">近90天</span>
+            <span class="dir-chip" data-quick="custom">自定义</span>
+          </div>
+          <div class="report-date-row" id="rptDateRow" style="display:none">
+            <input type="date" class="form-input" id="rptStart"><span style="color:#86909c">~</span><input type="date" class="form-input" id="rptEnd">
+          </div>
+          <div class="report-tool-row">
+            <span class="report-count" id="rptCount"></span>
+            <button class="btn btn-primary btn-sm" id="rptMetaBtn" title="对勾选（或当前筛选出）的多篇报告做横向复盘">✨ AI跨期复盘</button>
+            <button class="btn btn-secondary btn-sm" id="rptExportMd" title="合并导出为一份 Markdown">导出 MD</button>
+            <button class="btn btn-secondary btn-sm" id="rptExportJson" title="导出结构化 JSON 供编程分析">导出 JSON</button>
+            <button class="btn btn-danger btn-sm" id="rptBatchDel" style="display:none">批量删除</button>
+            <button class="btn btn-ghost btn-sm" id="rptClearSel" style="display:none">取消选择</button>
+          </div>
+        </div>
         <div data-page-node-id="flaCjKRuFsKXS9h3g5b6Kx" id="reportList"></div>
       </div>
 
@@ -2667,6 +2705,7 @@ var App = (function () {
   }
 
   async function generateSummary() {
+    metaReviewCtx = null; // 普通总结生成，清掉跨期复盘上下文
     if (!LLM.isEnabled()) {
       if (confirm("还没有配置 AI 模型，是否现在去设置？")) {
         openSettings();
@@ -2807,6 +2846,7 @@ var App = (function () {
 
   function saveReport() {
     if (!lastResult) return;
+    if (metaReviewCtx) { saveMetaReview(); return; }
     var start = $("#rangeStart").value;
     var end = $("#rangeEnd").value;
     // 日报：用日期选择器里的实际日期（补写历史日报时不能写成今天）
@@ -2832,37 +2872,344 @@ var App = (function () {
     renderReports();
   }
 
-  function renderReports() {
-    var list = Store.list("report");
+  /* ---------- 历史报告：筛选 / 多选 / 导出 / AI 跨期复盘 ---------- */
+  var reportFilter = { kind: "", keyword: "", start: "", end: "" };
+  var selectedReports = {}; // rid -> true，重渲染保留
+  var metaReviewCtx = null; // {reports:[...]} 跨期复盘上下文，决定"存档/重新生成"行为
+  var REPORT_KIND_LABEL = { daily: "日报", weekly: "周报", custom: "总结" };
+
+  function reportKindOf(r) {
+    return (r.kind === "daily" || r.kind === "weekly" || r.kind === "custom") ? r.kind : "weekly";
+  }
+
+  // 拆 range 字符串 "2026-09-01 ~ 2026-09-30"；缺失时用存档日期兜底
+  function reportRangeOf(r) {
+    var range = r.range || "";
+    var idx = range.indexOf(" ~ ");
+    var start = idx >= 0 ? range.slice(0, idx) : range;
+    var end = idx >= 0 ? range.slice(idx + 3) : range;
+    if (!start) start = end = localDateFromIso(r.created_at) || today();
+    return { start: start, end: end || start };
+  }
+
+  function filteredReports() {
+    var f = reportFilter;
+    var kw = f.keyword.trim().toLowerCase();
+    var list = Store.list("report").filter(function (r) {
+      if (f.kind && reportKindOf(r) !== f.kind) return false;
+      if (f.start || f.end) {
+        var rg = reportRangeOf(r); // 区间有重叠即命中
+        if (f.start && rg.end < f.start) return false;
+        if (f.end && rg.start > f.end) return false;
+      }
+      if (kw) {
+        var tplName = (TEMPLATES[r.template] || { name: "自定义" }).name;
+        var hay = ((r.__title || "") + " " + (r.content || "") + " " + tplName).toLowerCase();
+        if (hay.indexOf(kw) < 0) return false;
+      }
+      return true;
+    });
     list.sort(function (a, b) {
       return (b.created_at || "").localeCompare(a.created_at || "");
     });
+    return list;
+  }
+
+  // 勾选优先，否则取全部筛选结果（导出、复盘共用）
+  function targetReports() {
+    var list = filteredReports();
+    var picked = list.filter(function (r) { return selectedReports[r.__rid]; });
+    return picked.length ? picked : list;
+  }
+
+  function filterDesc() {
+    var kindLabel = reportFilter.kind ? (REPORT_KIND_LABEL[reportFilter.kind] || "全部") : "全部";
+    var time = reportFilter.start || "";
+    if (reportFilter.end && reportFilter.end !== reportFilter.start) time += " ~ " + reportFilter.end;
+    return "类型=" + kindLabel + " ｜ 时间=" + (time || "全部") + " ｜ 关键词=" + (reportFilter.keyword.trim() || "无");
+  }
+
+  function downloadText(filename, text, mime) {
+    var blob = new Blob([text], { type: mime });
+    var a = document.createElement("a");
+    a.href = URL.createObjectURL(blob);
+    a.download = filename;
+    document.body.appendChild(a); a.click();
+    setTimeout(function () { URL.revokeObjectURL(a.href); a.remove(); }, 1000);
+  }
+
+  function rangeBounds(reports) {
+    var starts = [], ends = [];
+    reports.forEach(function (r) { var rg = reportRangeOf(r); starts.push(rg.start); ends.push(rg.end); });
+    starts.sort(); ends.sort();
+    return { start: starts[0], end: ends[ends.length - 1] };
+  }
+
+  function exportReportsMd() {
+    var reports = targetReports();
+    if (!reports.length) { toast("没有可导出的报告"); return; }
+    var bd = rangeBounds(reports);
+    var d = new Date();
+    var stamp = d.getFullYear() + "-" + p2(d.getMonth() + 1) + "-" + p2(d.getDate()) + " " +
+      p2(d.getHours()) + ":" + p2(d.getMinutes());
+    var lines = [
+      "# SummaryDesk 历史报告导出", "",
+      "> 导出时间：" + stamp + " ｜ 篇数：" + reports.length + " ｜ 覆盖区间：" + bd.start + " ~ " + bd.end,
+      "> " + filterDesc(), "", "---", ""
+    ];
+    reports.forEach(function (r) {
+      var rg = reportRangeOf(r);
+      var tplName = (TEMPLATES[r.template] || { name: "自定义" }).name;
+      lines.push("## " + (r.__title || "报告"), "");
+      lines.push("- 类型：" + (REPORT_KIND_LABEL[reportKindOf(r)]) +
+        " ｜ 范围：" + rg.start + (rg.end !== rg.start ? " ~ " + rg.end : "") +
+        " ｜ 模板：" + tplName +
+        (r.created_at ? " ｜ 存档：" + localDateFromIso(r.created_at) : ""));
+      lines.push("", r.content || "", "", "---", "");
+    });
+    downloadText("summarydesk-reports-" + stamp.slice(0, 10).replace(/-/g, "") + "-" + reports.length + "篇.md",
+      lines.join("\n"), "text/markdown;charset=utf-8");
+    toast("已导出 " + reports.length + " 篇报告（Markdown）");
+  }
+
+  function exportReportsJson() {
+    var reports = targetReports();
+    if (!reports.length) { toast("没有可导出的报告"); return; }
+    var payload = {
+      exported_at: new Date().toISOString(),
+      count: reports.length,
+      filter: { kind: reportFilter.kind, start: reportFilter.start, end: reportFilter.end, keyword: reportFilter.keyword.trim() },
+      reports: reports.map(function (r) {
+        var rg = reportRangeOf(r);
+        return {
+          rid: r.__rid, title: r.__title || "报告",
+          kind: reportKindOf(r), kind_label: REPORT_KIND_LABEL[reportKindOf(r)],
+          template_code: r.template || "",
+          template_name: (TEMPLATES[r.template] || { name: "自定义" }).name,
+          range_start: rg.start, range_end: rg.end,
+          content: r.content || "", source_rids: r.source_rids || [],
+          created_at: r.created_at || ""
+        };
+      })
+    };
+    downloadText("summarydesk-reports-" + today().replace(/-/g, "") + "-" + reports.length + "篇.json",
+      JSON.stringify(payload, null, 2), "application/json;charset=utf-8");
+    toast("已导出 " + reports.length + " 篇报告（JSON）");
+  }
+
+  function batchDeleteReports() {
+    var picked = filteredReports().filter(function (r) { return selectedReports[r.__rid]; });
+    if (!picked.length) { toast("请先勾选要删除的报告"); return; }
+    if (!confirm("确定删除选中的 " + picked.length + " 篇报告？会同步删除云端数据。")) return;
+    picked.forEach(function (r) { Store.del(r.__rid); });
+    selectedReports = {};
+    toast("已删除 " + picked.length + " 篇报告");
+    renderReports();
+  }
+
+  // 对多篇历史报告做横向 AI 复盘
+  async function runMetaReview(reports) {
+    if (!LLM.isEnabled()) {
+      if (confirm("还没有配置 AI 模型，是否现在去设置？")) { openSettings(); }
+      return;
+    }
+    if (!reports.length) { toast("当前没有可复盘的报告"); return; }
+    if (reports.length < 2) { toast("至少选 2 篇报告再做跨期复盘"); return; }
+    var totalLen = reports.reduce(function (n, r) { return n + (r.content || "").length; }, 0);
+    if (totalLen > 60000) {
+      alert("报告总内容约 " + Math.round(totalLen / 10000) + " 万字，可能超出模型上下文。\n请缩短时间范围，或只勾选重点报告（建议 6 万字以内）。");
+      return;
+    }
+    metaReviewCtx = { reports: reports };
+    var bd = rangeBounds(reports);
+
+    var systemPrompt =
+      "你是一位资深职场复盘教练。用户会提供同一人在不同周期写的多篇工作汇报（日报/周报/总结）。" +
+      "请做跨期深度复盘，不要简单复述单篇内容，要跨多篇对比、提炼变化与规律。严格按以下五节输出 Markdown：\n" +
+      "## 一、整体趋势\n工作重心随时间的变化、产出节奏与状态起伏\n" +
+      "## 二、反复出现的问题\n只列跨 2 期及以上重复出现的卡点，并注明出现在哪些日期的报告里\n" +
+      "## 三、进展与成果\n连续追踪事项的推进轨迹（从什么状态推进到什么状态）\n" +
+      "## 四、专注状态观察\n仅当报告中存在专注/目标类数据时写本节，否则省略\n" +
+      "## 五、下一阶段建议\n2-3 条具体、可执行的动作\n" +
+      "只能基于报告原文，不要编造；直接输出 Markdown 正文，不加开场白。";
+
+    var blocks = reports.map(function (r, i) {
+      var rg = reportRangeOf(r);
+      var range = rg.start + (rg.end !== rg.start ? " ~ " + rg.end : "");
+      return "### 第 " + (i + 1) + " 篇 [" + REPORT_KIND_LABEL[reportKindOf(r)] + "] " + range + "\n" +
+        "标题：" + (r.__title || "报告") + "\n\n" + (r.content || "");
+    });
+    var userPrompt = "以下共 " + reports.length + " 篇工作汇报，覆盖 " + bd.start + " ~ " + bd.end + "：\n\n---\n\n" +
+      blocks.join("\n\n---\n\n");
+
+    var resultEl = $("#resultArea");
+    var actionsEl = $("#resultActions");
+    resultEl.style.display = "block";
+    resultEl.classList.add("loading");
+    resultEl.textContent = "正在对 " + reports.length + " 篇报告做跨期复盘，请稍候…";
+    actionsEl.style.display = "none";
+    try {
+      var res = await LLM.callAPI({
+        messages: [
+          { role: "system", content: systemPrompt },
+          { role: "user", content: userPrompt }
+        ],
+        temperature: 0.5,
+        max_tokens: 3000
+      }, { timeout: 90000 });
+      lastResult = res.content;
+      resultEl.classList.remove("loading");
+      resultEl.innerHTML = renderMarkdownSimple(res.content);
+      actionsEl.style.display = "flex";
+      toast("跨期复盘完成");
+      window.scrollTo({ top: 0, behavior: "smooth" });
+    } catch (e) {
+      metaReviewCtx = null;
+      resultEl.classList.remove("loading");
+      resultEl.innerHTML = '<span style="color:#f53f3f;">❌ 复盘失败：' + esc(e.message || e) + '</span>';
+      actionsEl.style.display = "none";
+    }
+  }
+
+  // 跨期复盘结果的存档：区间取各篇并集，来源 rid 去重合并
+  function saveMetaReview() {
+    var reports = metaReviewCtx.reports;
+    var bd = rangeBounds(reports);
+    var srcMap = {};
+    reports.forEach(function (r) {
+      (r.source_rids || []).forEach(function (s) { srcMap[s] = true; });
+    });
+    var range = bd.start + (bd.start !== bd.end ? " ~ " + bd.end : "");
+    var report = {
+      kind: "custom", template: "",
+      range: range, content: lastResult,
+      source_rids: Object.keys(srcMap),
+      created_at: nowIso()
+    };
+    Store.put("report:" + uid(), "report", "跨期复盘 · " + range, report);
+    metaReviewCtx = null;
+    toast("跨期复盘已存档");
+    renderReports();
+  }
+
+  function applyQuickRange(code) {
+    var t = today();
+    if (code === "all") {
+      reportFilter.start = reportFilter.end = "";
+      $("#rptDateRow").style.display = "none";
+    } else if (code === "30") {
+      reportFilter.start = daysAgo(29); reportFilter.end = t;
+      $("#rptDateRow").style.display = "none";
+    } else if (code === "month") {
+      reportFilter.start = t.slice(0, 8) + "01"; reportFilter.end = t;
+      $("#rptDateRow").style.display = "none";
+    } else if (code === "90") {
+      reportFilter.start = daysAgo(89); reportFilter.end = t;
+      $("#rptDateRow").style.display = "none";
+    } else { // custom：首次展开给默认近30天
+      if (!$("#rptStart").value) { $("#rptStart").value = daysAgo(29); $("#rptEnd").value = t; }
+      reportFilter.start = $("#rptStart").value;
+      reportFilter.end = $("#rptEnd").value;
+      $("#rptDateRow").style.display = "flex";
+    }
+  }
+
+  function bindReportTools() {
+    $("#rptKeyword").oninput = function () {
+      reportFilter.keyword = this.value;
+      renderReports();
+    };
+    $$("#rptKindChips .dir-chip").forEach(function (chip) {
+      chip.onclick = function () {
+        $$("#rptKindChips .dir-chip").forEach(function (c) { c.classList.remove("active"); });
+        chip.classList.add("active");
+        reportFilter.kind = chip.dataset.kind || "";
+        renderReports();
+      };
+    });
+    $$("#rptQuickChips .dir-chip").forEach(function (chip) {
+      chip.onclick = function () {
+        $$("#rptQuickChips .dir-chip").forEach(function (c) { c.classList.remove("active"); });
+        chip.classList.add("active");
+        applyQuickRange(chip.dataset.quick);
+        renderReports();
+      };
+    });
+    $("#rptStart").onchange = function () { reportFilter.start = this.value; renderReports(); };
+    $("#rptEnd").onchange = function () { reportFilter.end = this.value; renderReports(); };
+    $("#rptExportMd").onclick = exportReportsMd;
+    $("#rptExportJson").onclick = exportReportsJson;
+    $("#rptBatchDel").onclick = batchDeleteReports;
+    $("#rptClearSel").onclick = function () {
+      selectedReports = {};
+      renderReports();
+    };
+    $("#rptMetaBtn").onclick = function () {
+      runMetaReview(targetReports());
+    };
+  }
+
+  function renderReports() {
+    var list = filteredReports();
+    // 清掉已彻底不存在的勾选（被删/同步消失）；被筛掉的不清，方便跨筛选条件凑多选
+    var existRids = {};
+    Store.list("report").forEach(function (r) { existRids[r.__rid] = true; });
+    Object.keys(selectedReports).forEach(function (rid) {
+      if (!existRids[rid]) delete selectedReports[rid];
+    });
+    var selCount = list.filter(function (r) { return selectedReports[r.__rid]; }).length;
+
     var html = "";
+    var total = Object.keys(existRids).length;
     if (!list.length) {
-      html = '<div style="padding:16px;text-align:center;color:#c9cdd4;font-size:13px;">暂无历史报告</div>';
+      html = '<div style="padding:16px;text-align:center;color:#c9cdd4;font-size:13px;">' +
+        (total ? "没有符合筛选条件的报告" : "暂无历史报告") + '</div>';
     } else {
-      list.slice(0, 20).forEach(function (r) {
+      list.forEach(function (r) {
         var tpl = TEMPLATES[r.template] || { name: "自定义" };
-        html += '<div class="history-item" data-rid="' + r.__rid + '">' +
-          '<div>' +
+        var rg = reportRangeOf(r);
+        var saved = r.created_at ? localDateFromIso(r.created_at) : "";
+        var checked = selectedReports[r.__rid];
+        html += '<div class="history-item' + (checked ? " selected" : "") + '" data-rid="' + r.__rid + '">' +
+          '<input type="checkbox" class="rpt-check" data-rid="' + r.__rid + '"' + (checked ? " checked" : "") + '>' +
+          '<div class="h-main">' +
           '<div class="h-title">' + esc(r.__title || "报告") + '</div>' +
-          '<div class="h-meta">' + esc(tpl.name) + ' · ' + esc(r.range || "") + '</div>' +
+          '<div class="h-meta">' + esc(tpl.name) + ' · ' + esc(r.range || rg.start) +
+          (saved ? ' · 存档 ' + esc(saved) : '') + '</div>' +
           '</div>' +
           '<span style="font-size:12px;color:#86909c;">›</span>' +
           '</div>';
       });
     }
     $("#reportList").innerHTML = html;
+
+    var countEl = $("#rptCount");
+    countEl.textContent = selCount
+      ? "已选 " + selCount + " 篇 / 共 " + list.length + " 篇（操作只作用于勾选）"
+      : "共 " + list.length + " 篇" + (total ? "（未勾选时操作作用于全部筛选结果）" : "");
+    $("#rptBatchDel").style.display = selCount ? "" : "none";
+    $("#rptClearSel").style.display = selCount ? "" : "none";
+
     $$("#reportList .history-item").forEach(function (el) {
-      el.onclick = function () {
+      el.onclick = function (ev) {
+        if (ev.target.classList.contains("rpt-check")) return; // 勾选不展开
         var rid = el.dataset.rid;
         var r = Store.get(rid);
         if (!r) return;
+        metaReviewCtx = null; // 看历史原文后，存档/重生成回到普通总结语义
         lastResult = r.content;
         $("#resultArea").style.display = "block";
         $("#resultArea").innerHTML = renderMarkdownSimple(r.content);
         $("#resultActions").style.display = "flex";
         window.scrollTo({ top: 0, behavior: "smooth" });
+      };
+    });
+    $$("#reportList .rpt-check").forEach(function (box) {
+      box.onclick = function (ev) { ev.stopPropagation(); };
+      box.onchange = function () {
+        if (box.checked) selectedReports[box.dataset.rid] = true;
+        else delete selectedReports[box.dataset.rid];
+        renderReports();
       };
     });
   }
@@ -3154,7 +3501,12 @@ var App = (function () {
     $("#generateBtn").onclick = generateSummary;
     $("#copyResult").onclick = copyResult;
     $("#saveReport").onclick = saveReport;
-    $("#regenResult").onclick = generateSummary;
+    $("#regenResult").onclick = function () {
+      // 跨期复盘结果点"重新生成"重跑复盘，其他情况走普通总结
+      if (metaReviewCtx) { runMetaReview(metaReviewCtx.reports); }
+      else { generateSummary(); }
+    };
+    bindReportTools();
     setRange("daily");
 
     // 设置
