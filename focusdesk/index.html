@@ -3540,7 +3540,9 @@ function init(){
         };
         // 同步器在"确认登录"后立即绑定：即使首次拉取失败，轮询和手动点击仍然可用，
         // （旧代码把绑定放在拉取成功分支，首拉失败后指示器变成死按钮只能刷新页面）
-        setInterval(autoSync, 30000);
+        // 轮询节流：间隔 2 分钟且仅页面可见时执行（标签页隐藏时零请求，
+        // 切回页面由下方 visibilitychange 立即同步，编辑后 300ms 防抖上传不受影响）
+        setInterval(function(){ if(!document.hidden) autoSync(); }, 120000);
         document.addEventListener('visibilitychange', function(){
           if(!document.hidden) autoSync();
         });

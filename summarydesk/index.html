@@ -1213,10 +1213,12 @@ var Store = (function () {
   }
   function startPoll() {
     if (pollTm) return;
+    // 轮询节流：3 分钟一次且页面不可见时跳过（隐藏的标签页零请求）；
+    // 切回页面由下方 visibilitychange 监听立即拉取，编辑后 800ms 防抖上传不受影响
     pollTm = setInterval(function () {
-      if (!api() || anon) return;
+      if (document.hidden || !api() || anon) return;
       pull().then(function () { return flush(); });
-    }, 60000);
+    }, 180000);
     // 回到页面时自动拉取（15 秒节流，避免频繁切换打接口）
     document.addEventListener("visibilitychange", function () {
       if (document.hidden || !api() || anon) return;
