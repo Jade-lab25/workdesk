@@ -540,8 +540,8 @@ input:focus, textarea:focus { outline: none; }
 
   <!--pnid:nHQP2DwRxaoEg04ZalbBh4--><!-- ===== Tab Navigation ===== -->
   <div data-page-node-id="hk8J9Yy1dz1LGkPNvHAudU" class="tabs">
-    <button data-page-node-id="2hXRJEJwex4GAEGZblrtyE" class="tab-btn active" data-tab="idea"><!--pnid:CmJ2KadjYY31eyy9qXtqfs-->💡 灵感库</button>
-    <button data-page-node-id="7s3hgPIqLtBohjWCSicmBe" class="tab-btn" data-tab="log"><!--pnid:QgidYyTfyz7IrclWnweTY7-->📋 工作日志</button>
+    <button data-page-node-id="7s3hgPIqLtBohjWCSicmBe" class="tab-btn active" data-tab="log"><!--pnid:QgidYyTfyz7IrclWnweTY7-->📋 工作日志</button>
+    <button data-page-node-id="2hXRJEJwex4GAEGZblrtyE" class="tab-btn" data-tab="idea"><!--pnid:CmJ2KadjYY31eyy9qXtqfs-->💡 灵感库</button>
     <button data-page-node-id="vUYetsN0XQgxkKEXFA6Yhh" class="tab-btn" data-tab="summary"><!--pnid:1F1N3f1tH8hQXQlyd3yO2p-->✨ 总结生成</button>
     <button data-page-node-id="OJT4c4VuEzC08uYsjjCu1s" class="tab-btn" data-tab="calendar"><!--pnid:2hQJNBuG57A4RdiHuoMwYT-->📅 日历</button>
   </div>
@@ -550,7 +550,7 @@ input:focus, textarea:focus { outline: none; }
   <div data-page-node-id="2FAbcTvISI2szvBlrdSVPa" class="content">
 
     <!--pnid:EwXQEbSxSzZ46CRIGsDOhU--><!-- === Idea Tab === -->
-    <div data-page-node-id="fUbYyP7Q15eZcqAbugdfdg" class="tab-pane active" id="tab-idea">
+    <div data-page-node-id="fUbYyP7Q15eZcqAbugdfdg" class="tab-pane" id="tab-idea">
       <div data-page-node-id="U3VCjESFW9ddt3OqAQIIPR" class="idea-input-wrap">
         <textarea data-page-node-id="ZyL7zn9RU4OEubJ79GZGAz" class="idea-input" id="ideaInput" placeholder="随手记录灵感、想法、碎片思考…
 
@@ -571,7 +571,7 @@ input:focus, textarea:focus { outline: none; }
     </div>
 
     <!--pnid:oldnAjJECGM5XMH3XOjoBt--><!-- === Log Tab === -->
-    <div data-page-node-id="c095cv0r8rBZ26Rmq4wmdh" class="tab-pane" id="tab-log">
+    <div data-page-node-id="c095cv0r8rBZ26Rmq4wmdh" class="tab-pane active" id="tab-log">
       <div data-page-node-id="OVS8kejMXGCHJFKndGa1wO" class="log-date-bar">
         <button data-page-node-id="pzyQhDSCPkesKzQG6UzhAU" id="logPrev"><!--pnid:MJjDkJmZk7qNJ5oxjw58WX-->‹</button>
         <div data-page-node-id="cC0h4Lt4PW52AAsNNoYonY" class="date-text" id="logDateText"><!--pnid:1Y4jCUr76frKqg6euBaN7n-->今天</div>
@@ -1842,7 +1842,7 @@ var POLISH_GUIDE = `
  * 应用主逻辑
  * ===================================================================== */
 var App = (function () {
-  var currentTab = "idea";
+  var currentTab = "log"; // 默认打开工作日志（灵感库含私人内容，避免旁人一眼看到）
   var currentDate = today();
   var currentTag = null;
   var currentDir = null;       // 灵感列表的方向筛选
@@ -3564,6 +3564,7 @@ var App = (function () {
 
     // 启动同步
     Store.boot().then(function () {
+      renderLogs();
       renderIdeas();
       updateSourceCount();
     });
