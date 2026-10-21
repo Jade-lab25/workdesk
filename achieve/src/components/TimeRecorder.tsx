@@ -1,6 +1,6 @@
 import { useState, useEffect, useCallback } from 'react';
 import type { TimeRecord } from '../types';
-import { Clock, Play, Square, Calendar, StickyNote, Trash2 } from 'lucide-react';
+import { Clock, Play, Square, Calendar, StickyNote, Trash2, Plus } from 'lucide-react';
 
 interface Toast {
   id: string;
@@ -16,15 +16,23 @@ interface TimeRecorderProps {
   onEndTimer: (recordId: string) => void;
   onDelete: (id: string) => void;
   onUpdateNote: (id: string, note: string) => void;
+  onAddManual: (content: string, startTime: string, endTime: string) => void;
 }
 
-export function TimeRecorder({ records, selectedDate, onSelectDate, onStartTimer, onEndTimer, onDelete, onUpdateNote }: TimeRecorderProps) {
+export function TimeRecorder({ records, selectedDate, onSelectDate, onStartTimer, onEndTimer, onDelete, onUpdateNote, onAddManual }: TimeRecorderProps) {
   const [content, setContent] = useState('');
   const [recordingId, setRecordingId] = useState<string | null>(null);
   const [elapsedTime, setElapsedTime] = useState(0);
   const [noteId, setNoteId] = useState<string | null>(null);
   const [noteContent, setNoteContent] = useState('');
   const [toasts, setToasts] = useState<Toast[]>([]);
+
+  // 手动补录弹窗
+  const [showManual, setShowManual] = useState(false);
+  const [mContent, setMContent] = useState('');
+  const [mDate, setMDate] = useState('');
+  const [mStart, setMStart] = useState('');
+  const [mEnd, setMEnd] = useState('');
 
   const addToast = useCallback((message: string, type: 'success' | 'error' | 'info' | 'warning' = 'success') => {
     const id = Date.now().toString();
@@ -99,6 +107,39 @@ export function TimeRecorder({ records, selectedDate, onSelectDate, onStartTimer
     }
   };
 
+  const nowHM = () => {
+    const d = new Date();
+    return `${String(d.getHours()).padStart(2, '0')}:${String(d.getMinutes()).padStart(2, '0')}`;
+  };
+
+  const handleOpenManual = () => {
+    setMContent('');
+    setMDate(selectedDate);
+    setMStart(nowHM());
+    setMEnd(nowHM());
+    setShowManual(true);
+  };
+
+  const handleSaveManual = () => {
+    if (!mContent.trim() || !mDate || !mStart || !mEnd) return;
+    // 不带时区后缀的字符串按本地时区解析，与实时计时记录保持一致
+    const startDate = new Date(`${mDate}T${mStart}:00`);
+    const endDate = new Date(`${mDate}T${mEnd}:00`);
+    if (isNaN(startDate.getTime()) || isNaN(endDate.getTime())) {
+      addToast('时间格式不正确', 'error');
+      return;
+    }
+    if (endDate.getTime() <= startDate.getTime()) {
+      addToast('结束时间需晚于开始时间（跨天请拆成两条补录）', 'error');
+      return;
+    }
+    onAddManual(mContent.trim(), startDate.toISOString(), endDate.toISOString());
+    const seconds = Math.floor((endDate.getTime() - startDate.getTime()) / 1000);
+    addToast(`已补录，时长 ${formatDuration(seconds)}`, 'success');
+    setShowManual(false);
+    onSelectDate(mDate); // 跳到补录日期，所见即所得
+  };
+
   const formatDuration = (seconds: number) => {
     const hours = Math.floor(seconds / 3600);
     const mins = Math.floor((seconds % 3600) / 60);
@@ -170,6 +211,13 @@ export function TimeRecorder({ records, selectedDate, onSelectDate, onStartTimer
             时间记录
           </h2>
           <div className="flex items-center gap-2">
+            <button
+              onClick={handleOpenManual}
+              className="px-3 py-1.5 border border-purple-200 text-purple-600 rounded-lg text-sm hover:bg-purple-50 transition-colors flex items-center gap-1"
+            >
+              <Plus className="w-4 h-4" />
+              手动补录
+            </button>
             <Calendar className="w-4 h-4 text-gray-500" />
             <input
               type="date"
@@ -334,6 +382,79 @@ export function TimeRecorder({ records, selectedDate, onSelectDate, onStartTimer
           </div>
         </div>
       </div>
+
+      {showManual && (
+        <div className="fixed inset-0 bg-black/50 flex items-center justify-center z-50 p-4">
+          <div className="bg-white rounded-xl p-6 w-full max-w-md">
+            <h3 className="text-lg font-bold text-gray-800 mb-4 flex items-center gap-2">
+              <Plus className="w-5 h-5 text-purple-500" />
+              手动补录时间
+            </h3>
+
+            <div className="space-y-4">
+              <div>
+                <label className="block text-sm font-medium text-gray-700 mb-1">任务内容</label>
+                <input
+                  type="text"
+                  value={mContent}
+                  onChange={(e) => setMContent(e.target.value)}
+                  className="w-full px-4 py-2 border border-gray-200 rounded-lg focus:outline-none focus:ring-2 focus:ring-purple-500"
+                  placeholder="完成了什么任务…"
+                  autoFocus
+                />
+              </div>
+
+              <div>
+                <label className="block text-sm font-medium text-gray-700 mb-1">日期</label>
+                <input
+                  type="date"
+                  value={mDate}
+                  onChange={(e) => setMDate(e.target.value)}
+                  className="w-full px-4 py-2 border border-gray-200 rounded-lg focus:outline-none focus:ring-2 focus:ring-purple-500"
+                />
+              </div>
+
+              <div className="flex gap-3">
+                <div className="flex-1">
+                  <label className="block text-sm font-medium text-gray-700 mb-1">开始时间</label>
+                  <input
+                    type="time"
+                    value={mStart}
+                    onChange={(e) => setMStart(e.target.value)}
+                    className="w-full px-4 py-2 border border-gray-200 rounded-lg focus:outline-none focus:ring-2 focus:ring-purple-500"
+                  />
+                </div>
+                <div className="flex-1">
+                  <label className="block text-sm font-medium text-gray-700 mb-1">结束时间</label>
+                  <input
+                    type="time"
+                    value={mEnd}
+                    onChange={(e) => setMEnd(e.target.value)}
+                    className="w-full px-4 py-2 border border-gray-200 rounded-lg focus:outline-none focus:ring-2 focus:ring-purple-500"
+                  />
+                </div>
+              </div>
+              <p className="text-xs text-gray-400">仅支持同一天内的时间段；跨天的记录请拆成两条补录</p>
+            </div>
+
+            <div className="flex gap-3 mt-6">
+              <button
+                onClick={() => setShowManual(false)}
+                className="flex-1 px-4 py-2 border border-gray-200 rounded-lg hover:bg-gray-50 transition-colors"
+              >
+                取消
+              </button>
+              <button
+                onClick={handleSaveManual}
+                disabled={!mContent.trim() || !mDate || !mStart || !mEnd}
+                className="flex-1 px-4 py-2 bg-purple-500 text-white rounded-lg hover:bg-purple-600 transition-colors disabled:opacity-50 disabled:cursor-not-allowed"
+              >
+                保存
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
     </>
   );
 }

@@ -347,16 +347,18 @@ export function useAppState() {
     });
   }, []);
 
-  const addTimeRecord = useCallback((startTime: string, endTime: string, content: string) => {
+  // 手动补录（外部计时工具的数据）：createdAt/startTimestamp 均取填写的开始时间，
+  // 这样记录才会归属到它实际发生的日期，而不是补录操作的今天
+  const addManualTimeRecord = useCallback((content: string, startTime: string, endTime: string) => {
     const record: TimeRecord = markDirty({
       id: Date.now().toString(),
       startTime,
       endTime,
-      content,
+      content: content.trim(),
       note: '',
-      createdAt: new Date().toISOString(),
+      createdAt: startTime,
       todoId: null,
-      startTimestamp: new Date().getTime(),
+      startTimestamp: new Date(startTime).getTime(),
     });
     setState(prev => ({ ...prev, timeRecords: [record, ...prev.timeRecords] }));
   }, []);
@@ -729,7 +731,7 @@ export function useAppState() {
     addCheckInProject,
     deleteCheckInProject,
     checkIn,
-    addTimeRecord,
+    addManualTimeRecord,
     deleteTimeRecord,
     updateTimeRecordNote,
     startTimer,

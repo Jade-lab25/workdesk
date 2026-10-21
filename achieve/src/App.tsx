@@ -42,6 +42,7 @@ function App() {
     checkIn,
     deleteTimeRecord,
     updateTimeRecordNote,
+    addManualTimeRecord,
     startTimer,
     endTimer,
     addInspiration,
@@ -209,6 +210,7 @@ function App() {
                 onEndTimer={endTimer}
                 onDelete={deleteTimeRecord}
                 onUpdateNote={updateTimeRecordNote}
+                onAddManual={addManualTimeRecord}
               />
             </div>
             <div className="md:col-span-2 lg:col-span-1">
