@@ -125,6 +125,11 @@ input:focus, textarea:focus { outline: none; }
 .idea-tags-hint {
   font-size: 12px; color: #86909c; margin-top: 6px;
 }
+.idea-count {
+  position: absolute; left: 14px; bottom: 14px;
+  font-size: 12px; color: #86909c; pointer-events: none; user-select: none;
+}
+.idea-count.reached { color: #00b42a; font-weight: 600; }
 
 .tag-filter {
   display: flex; flex-wrap: wrap; gap: 6px; margin-bottom: 14px;
@@ -557,6 +562,7 @@ input:focus, textarea:focus { outline: none; }
 支持 #标签 自动识别，例如 #产品 #同步"></textarea>
         <button data-page-node-id="H1cpC0l1CKIz74dvdPh1pL" class="idea-submit" id="ideaSubmit"><!--pnid:b5y2HIxICVL30ET41VvJfy-->记录</button>
         <button data-page-node-id="NkcePAE0Bq76AFmPcEUqP6" class="idea-cancel" id="ideaCancel" style="display:none"><!--pnid:4elIhkUwQUnkyOq6XAbGZ8-->取消</button>
+        <span class="idea-count" id="ideaCount">0 字 / 1000</span>
       </div>
       <div data-page-node-id="XdDpwFGDuGe3X8LfspgzJw" class="idea-dir" id="ideaDir">
         <span data-page-node-id="wncJHCm1Ih9uEJbbqwkMpA" class="idea-dir-label"><!--pnid:iYL3sIBMFTm8biPH1Juv8A-->方向</span>
@@ -1875,11 +1881,20 @@ var App = (function () {
   /* ================================================================
    * 灵感库
    * ============================================================== */
+  var IDEA_GOAL = 1000; // 一次性表达练习目标字数
+  function updateIdeaCount() {
+    var n = ($("#ideaInput").value || "").replace(/\s/g, "").length;
+    var el = $("#ideaCount");
+    el.textContent = n + " 字 / " + IDEA_GOAL;
+    el.classList.toggle("reached", n >= IDEA_GOAL);
+  }
+
   function exitEditMode() {
     editingRid = null;
     $("#ideaInput").value = "";
     $("#ideaSubmit").textContent = "记录";
     $("#ideaCancel").style.display = "none";
+    updateIdeaCount();
   }
 
   function submitIdea() {
@@ -1911,6 +1926,7 @@ var App = (function () {
     var rid = "idea:" + uid();
     Store.put(rid, "idea", firstLine, idea);
     input.value = "";
+    updateIdeaCount();
     toast("已记录灵感");
     renderIdeas();
   }
@@ -1999,6 +2015,7 @@ var App = (function () {
           editingRid = rid;
           var input = $("#ideaInput");
           input.value = item.content;
+          updateIdeaCount();
           var dir = item.direction === "growth" ? "growth" : "work";
           currentIdeaDir = dir;
           $$("#ideaDir .idea-dir-btn").forEach(function (b) {
@@ -3455,6 +3472,8 @@ var App = (function () {
         e.preventDefault(); submitIdea();
       }
     });
+    $("#ideaInput").addEventListener("input", updateIdeaCount);
+    updateIdeaCount();
 
     // 工作日志
     $("#logPrev").onclick = function () { changeLogDate(-1); };
