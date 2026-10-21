@@ -107,16 +107,16 @@ export function TimeRecorder({ records, selectedDate, onSelectDate, onStartTimer
     }
   };
 
-  const nowHM = () => {
-    const d = new Date();
-    return `${String(d.getHours()).padStart(2, '0')}:${String(d.getMinutes()).padStart(2, '0')}`;
-  };
+  const toHM = (d: Date) =>
+    `${String(d.getHours()).padStart(2, '0')}:${String(d.getMinutes()).padStart(2, '0')}`;
 
   const handleOpenManual = () => {
+    const startD = new Date();
+    const endD = new Date(startD.getTime() + 25 * 60 * 1000); // 默认一个番茄钟
     setMContent('');
     setMDate(selectedDate);
-    setMStart(nowHM());
-    setMEnd(nowHM());
+    setMStart(toHM(startD));
+    setMEnd(toHM(endD));
     setShowManual(true);
   };
 
