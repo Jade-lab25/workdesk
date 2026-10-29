@@ -3526,6 +3526,9 @@ function init(){
           WB_Cloud.fetchAll().then(function(res){
             var sigBefore = cloudSig();
             mergeCloudRecords(res.records, res.tombstones);
+            // 习惯/打卡日志是独立全局变量，合并后必须重新从系统记录倒入，
+            // 否则其他设备的打卡要等本页 F5 才显示（桌面常开页只走轮询路径）
+            loadHabits();
             if(cloudSig() !== sigBefore){
               // 拉到了其他设备的变更：立即重绘（含重复任务对账），不再"必须刷新页面"
               renderAll();
@@ -3557,6 +3560,7 @@ function init(){
             WB_Cloud.fetchAll().then(function(res){
               var sigBefore = cloudSig();
               mergeCloudRecords(res.records, res.tombstones);
+              loadHabits(); // 同 autoSync：合并后刷新习惯全局变量，其他设备打卡立即可见
               if(cloudSig() !== sigBefore) renderAll();
               return WB_Cloud.pushAll(true).then(function(syncRes){
                 if(syncRes && syncRes.skipped && syncRes.skipped.length){
@@ -3613,6 +3617,40 @@ function init(){
   }
 }
 
+/* 长期打卡系统记录的结构合并：两端各自打卡/编辑互不感知，整条记录 LWW
+ * 会把另一端刚上传的习惯或日志整条抹掉。习惯定义按 id 取较新；打卡日志按 id
+ * 做并集，再按「习惯+日期」去重（两端在同步间隔内对同一天重复打卡只留较晚一条）。 */
+function mergeHabitSysRec(a, b){
+  function tick(o){
+    if(!o) return 0;
+    var t = o.updatedAt || o.completedAt || o.createdAt;
+    if(!t) return 0;
+    var d = new Date(t);
+    return isNaN(d.getTime()) ? 0 : d.getTime();
+  }
+  var out = Object.assign({}, tick(a) >= tick(b) ? a : b);
+  var hmap = {};
+  // 同 id 习惯取较新版本；先放 b 再放 a，严格大于才替换，保证平局结果确定
+  (b.habits || []).concat(a.habits || []).forEach(function(h){
+    if(!h || !h.id) return;
+    if(!hmap[h.id] || tick(h) > tick(hmap[h.id])) hmap[h.id] = h;
+  });
+  out.habits = Object.keys(hmap).map(function(k){ return hmap[k]; });
+  var lmap = {};
+  (b.habitLogs || []).concat(a.habitLogs || []).forEach(function(l){
+    if(!l || !l.id) return;
+    if(!lmap[l.id] || tick(l) > tick(lmap[l.id])) lmap[l.id] = l;
+  });
+  var byDay = {};
+  Object.keys(lmap).forEach(function(k){
+    var l = lmap[k];
+    var key = l.habitId + '|' + l.date;
+    if(!byDay[key] || tick(l) > tick(byDay[key])) byDay[key] = l;
+  });
+  out.habitLogs = Object.keys(byDay).map(function(k){ return byDay[k]; });
+  return out;
+}
+
 /* 轻量路径：云端拉取的记录与本地合并（updatedAt 较新者优先；本地独有保留待上推）
  * 修复：之前是"云端优先"，导入/本地修改后若云端 id 相同，会被旧的云端版本覆盖，
  *       导致刚导入的内容被拉取"清空"。改为按时间戳取最新版本。 */
@@ -3662,7 +3700,21 @@ function mergeCloudRecords(cloudRecs, cloudDels){
     if(cr){
       // id 相同：取 updatedAt 较新的那条；本地严格更新时标脏补推
       if(recTime(lr) > recTime(cr)) hasLocalOnly = true;
-      merged.push(recTime(lr) >= recTime(cr) ? lr : cr);
+      if(lr.title === '__focusdesk_habits__' || cr.title === '__focusdesk_habits__'){
+        // 长期打卡系统记录不能整条二选一：习惯/日志按稳定 id 并集合并，
+        // 否则本端在轮询间隔内又打一次卡，会把另一端刚上传的日志挤出本地视图。
+        // 本地独有的习惯/日志要标脏，随后的 pushAll 把并集补推上云。
+        var cloudHabitIds = {}, cloudLogIds = {};
+        (cr.habits || []).forEach(function(h){ cloudHabitIds[h.id] = 1; });
+        (cr.habitLogs || []).forEach(function(l){ cloudLogIds[l.id] = 1; });
+        if((lr.habits || []).some(function(h){ return !cloudHabitIds[h.id]; })
+           || (lr.habitLogs || []).some(function(l){ return !cloudLogIds[l.id]; })){
+          hasLocalOnly = true;
+        }
+        merged.push(mergeHabitSysRec(lr, cr));
+      } else {
+        merged.push(recTime(lr) >= recTime(cr) ? lr : cr);
+      }
     } else {
       // 只有本地有：保留并标记待推（稍后由 pushAll 补推上云端）
       hasLocalOnly = true;
@@ -3676,13 +3728,13 @@ function mergeCloudRecords(cloudRecs, cloudDels){
     merged.push(cr);
   });
 
-  // 习惯系统记录：如果云端和本地各有一条 __focusdesk_habits__，保留时间较新的（上面已经按 id 处理了）
-  // 但如果云端和本地 id 不同却都是习惯系统记录，只保留一条（取较新的）——兼容 id 规则不同的历史情况
+  // 兼容历史：云端和本地习惯系统记录 id 不同却同为系统记录时，同样按 id 并集合成一条
+  // （旧实现整条取较新，会丢另一端的打卡日志）
   var habitRecs = merged.filter(function(m){ return m.title === '__focusdesk_habits__'; });
   if(habitRecs.length > 1){
-    var newest = habitRecs.reduce(function(a,b){ return recTime(a) >= recTime(b) ? a : b; });
+    var mergedHabitRec = habitRecs.reduce(function(a,b){ return mergeHabitSysRec(a,b); });
     merged = merged.filter(function(m){ return m.title !== '__focusdesk_habits__'; });
-    merged.push(newest);
+    merged.push(mergedHabitRec);
   }
 
   State.records = merged;
