@@ -1,5 +1,6 @@
 import type { CheckInRecord, TimeRecord, AchievementLog } from '../types';
 import { Calendar, Clock, Zap, ShoppingCart, CheckSquare, AlertCircle } from 'lucide-react';
+import { isActivityLog } from '../utils/achievementLogs';
 
 type TabType = 'todo' | 'checkin' | 'time' | 'achievement' | 'inspiration' | 'sync' | 'shop';
 
@@ -216,13 +217,13 @@ export function DateDetail({ activeTab, date, checkInRecords, timeRecords, achie
           </div>
           <div className="bg-gradient-to-br from-green-50 to-green-100 rounded-xl p-4 text-center">
             <div className="text-2xl font-bold text-green-600">
-              {achievementLogs.filter(l => l.points > 0).reduce((sum, l) => sum + l.points, 0)}
+              {achievementLogs.filter(l => l.points > 0 && isActivityLog(l, checkInRecords)).reduce((sum, l) => sum + l.points, 0)}
             </div>
             <div className="text-sm text-green-700 mt-1">累计获得</div>
           </div>
           <div className="bg-gradient-to-br from-red-50 to-red-100 rounded-xl p-4 text-center">
             <div className="text-2xl font-bold text-red-600">
-              {Math.abs(achievementLogs.filter(l => l.points < 0).reduce((sum, l) => sum + l.points, 0))}
+              {Math.abs(achievementLogs.filter(l => l.points < 0 && isActivityLog(l, checkInRecords)).reduce((sum, l) => sum + l.points, 0))}
             </div>
             <div className="text-sm text-red-700 mt-1">累计消耗</div>
           </div>

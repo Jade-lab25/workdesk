@@ -7,6 +7,7 @@
     "dev": "vite",
     "build": "tsc -b && vite build",
     "lint": "eslint .",
+    "test": "node tests/run-sync-state-test.mjs && node tests/import-state-regression.mjs && node tests/multi-device-sync-regression.mjs && node tests/achievement-logs-test.mjs",
     "preview": "vite preview",
     "serve": "serve dist -l 3000",
     "zip": "node scripts/zip.js",

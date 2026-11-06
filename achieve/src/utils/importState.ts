@@ -1,4 +1,7 @@
 import type { AchievementLog, AppState, Syncable, TimeRecord, Todo } from '../types';
+// 显式 .ts 后缀：本文件被 tests/*.mjs 以 Node 原生 TS 擦除模式直接加载，
+// Node ESM 不做无扩展名解析；tsc(allowImportingTsExtensions) 与 Vite 均兼容
+import { normalizeAchievementLogs } from './achievementLogs.ts';
 
 function markImportedDirty<T extends Syncable>(item: T): T {
   return {
@@ -49,7 +52,12 @@ export function recalculateTodoTime(todos: Todo[], timeRecords: TimeRecord[]): T
 export function prepareImportedState(parsed: Partial<AppState>, initialState: AppState): AppState {
   const timeRecords = markImportedArrayDirty(parsed.timeRecords);
   const todos = recalculateTodoTime(markImportedArrayDirty(parsed.todos), timeRecords);
-  const achievementLogs = markImportedArrayDirty(parsed.achievementLogs);
+  const checkInRecords = markImportedArrayDirty(parsed.checkInRecords);
+  // 导入备份里可能带着旧同步层降级的脏 commodity，先归一化再算总额
+  const achievementLogs = normalizeAchievementLogs(
+    markImportedArrayDirty(parsed.achievementLogs),
+    checkInRecords,
+  );
   const totals = calculateAchievementTotals(achievementLogs);
 
   return {
@@ -57,7 +65,7 @@ export function prepareImportedState(parsed: Partial<AppState>, initialState: Ap
     ...parsed,
     todos,
     checkInProjects: markImportedArrayDirty(parsed.checkInProjects),
-    checkInRecords: markImportedArrayDirty(parsed.checkInRecords),
+    checkInRecords,
     timeRecords,
     achievementLogs,
     inspirations: markImportedArrayDirty(parsed.inspirations),

@@ -2,6 +2,7 @@ import { useState, useEffect, useCallback } from 'react';
 import type { Todo, CheckInProject, CheckInRecord, TimeRecord, AchievementLog, AppState, CheckInType, Inspiration, Syncable, ShopItem, ShopCategory } from '../types';
 import { addDeletedId, addDeletedIds } from '../utils/syncState';
 import { prepareImportedState } from '../utils/importState';
+import { isActivityLog, normalizeAchievementLogs } from '../utils/achievementLogs';
 
 const STORAGE_KEY = 'work-status-app-data';
 
@@ -40,15 +41,9 @@ function markDirtyById<T extends { id: string } & Syncable>(items: T[], id: stri
   return items.map(item => item.id === id ? markDirty(item) as T : item);
 }
 
-/**
- * 日历统计口径：成就商店兑换（shop_purchase）是余额层面的消费，
- * 不反映当日/月/年的正常活动，统计成就值时排除。
- * 打卡系统里的商品库打卡（commodity，如图"分心记录"）属于正常打卡活动，照常计入；
- * 任务打卡 / 拖延扣分（task）、待办（todo）同样计入。
- */
-function isActivityLog(log: AchievementLog): boolean {
-  return log.type !== 'shop_purchase';
-}
+// 日历统计口径统一走 utils/achievementLogs.ts 的 isActivityLog：
+// 成就商店购买（含被旧同步层降级成 commodity 的历史脏数据）排除，
+// 打卡商品库（commodity）、任务/待办等正常活动照常计入。
 
 function loadState(): AppState {
   try {
@@ -56,6 +51,13 @@ function loadState(): AppState {
     if (saved) {
       const parsed = JSON.parse(saved);
       const state = { ...initialState, ...parsed };
+
+      // 历史脏数据内存纠正：旧同步层降级成 commodity 的商店购买改回 shop_purchase
+      // （不标脏、不上传，云端由 002 迁移 SQL 修复）
+      state.achievementLogs = normalizeAchievementLogs(
+        state.achievementLogs,
+        state.checkInRecords || [],
+      );
 
       // ✅ 从 achievementLogs 实时计算成就值，不依赖 userStats
       const logs = state.achievementLogs || [];
@@ -511,7 +513,7 @@ export function useAppState() {
     });
 
     return {
-      totalAchievements: dayLogs.filter(isActivityLog).reduce((sum, log) => sum + log.points, 0),
+      totalAchievements: dayLogs.filter(log => isActivityLog(log, state.checkInRecords)).reduce((sum, log) => sum + log.points, 0),
       checkInCount: taskCheckIns.length,
     };
   }, [state.achievementLogs, state.checkInRecords]);
@@ -574,7 +576,7 @@ export function useAppState() {
     });
 
     return {
-      totalAchievements: monthLogs.filter(isActivityLog).reduce((sum, log) => sum + log.points, 0),
+      totalAchievements: monthLogs.filter(log => isActivityLog(log, state.checkInRecords)).reduce((sum, log) => sum + log.points, 0),
       checkInCount: taskCheckIns.length,
       todoCount: monthTodos.length,
       timeRecordCount: monthTimeRecords.length,
@@ -610,7 +612,7 @@ export function useAppState() {
     });
 
     return {
-      totalAchievements: yearLogs.filter(isActivityLog).reduce((sum, log) => sum + log.points, 0),
+      totalAchievements: yearLogs.filter(log => isActivityLog(log, state.checkInRecords)).reduce((sum, log) => sum + log.points, 0),
       checkInCount: taskCheckIns.length,
       todoCount: yearTodos.length,
       timeRecordCount: yearTimeRecords.length,

@@ -16,19 +16,14 @@ export function sanitizeForSync<T extends Record<string, unknown>>(
   const { is_dirty, isDirty, synced_at, syncedAt: _syncedAt, ...rest } = record;
   const payload = camelToSnake(rest);
 
-  // Optional local fields may not exist in older Supabase projects.
+  // shop_items 表没有 icon 列（见 supabase-migrations.sql），上传前剥除；
+  // purchased_at 列已存在，正常同步。
   if (tableName === 'shop_items') {
-    delete payload.purchased_at;
     delete payload.icon;
   }
-
-  if (tableName === 'achievement_logs') {
-    delete payload.shop_item_id;
-    // Supabase check constraint only allows 'task' and 'commodity'
-    if (payload.type === 'shop_purchase' || payload.type === 'todo') {
-      payload.type = payload.type === 'shop_purchase' ? 'commodity' : 'task';
-    }
-  }
+  // achievement_logs 的四种 type（todo/task/commodity/shop_purchase）DB 约束
+  // 均已允许，shop_item_id 列也已存在，原样上传，不再做降级改写——
+  // 旧改写会把成就商店购买污染成 commodity，导致日历统计排除规则失效。
 
   return {
     ...payload,

@@ -34,6 +34,8 @@ export function AchievementSystem({ logs }: AchievementSystemProps) {
         return <Zap className="w-4 h-4 text-green-500" />;
       case 'commodity':
         return <ShoppingCart className="w-4 h-4 text-red-500" />;
+      case 'shop_purchase':
+        return <ShoppingCart className="w-4 h-4 text-purple-500" />;
     }
   };
 
@@ -45,6 +47,8 @@ export function AchievementSystem({ logs }: AchievementSystemProps) {
         return '任务';
       case 'commodity':
         return '商品';
+      case 'shop_purchase':
+        return '商店';
     }
   };
 
@@ -95,6 +99,7 @@ export function AchievementSystem({ logs }: AchievementSystemProps) {
                     <span className={`text-xs px-2 py-0.5 rounded-full ${
                       log.type === 'todo' ? 'bg-blue-100 text-blue-600' :
                       log.type === 'task' ? 'bg-green-100 text-green-600' :
+                      log.type === 'shop_purchase' ? 'bg-purple-100 text-purple-600' :
                       'bg-red-100 text-red-600'
                     }`}>
                       {getTypeLabel(log.type)}

@@ -23,9 +23,11 @@ const shopPayload = sanitizeForSync({
   name: 'Coffee',
   isPurchased: true,
   purchasedAt: '2026-07-02T08:00:00.000Z',
+  icon: 'coffee',
 }, 'user-1', '2026-07-02T08:01:00.000Z', 'shop_items');
 assert.equal(shopPayload.is_purchased, true, 'camelCase fields should be converted to snake_case');
-assert.equal(shopPayload.purchased_at, undefined, 'shop payload should omit purchased_at for old Supabase schemas');
+assert.equal(shopPayload.purchased_at, '2026-07-02T08:00:00.000Z', 'purchased_at column now exists and must be kept in sync payloads');
+assert.equal(shopPayload.icon, undefined, 'shop_items has no icon column, icon must still be stripped');
 
 const purchaseLogPayload = sanitizeForSync({
   id: 'log-1',
@@ -35,8 +37,17 @@ const purchaseLogPayload = sanitizeForSync({
   createdAt: '2026-07-02T08:00:00.000Z',
   shopItemId: 'shop-1',
 }, 'user-1', '2026-07-02T08:01:00.000Z', 'achievement_logs');
-assert.equal(purchaseLogPayload.type, 'commodity', 'shop purchases should sync as commodity for old achievement log constraints');
-assert.equal(purchaseLogPayload.shop_item_id, undefined, 'achievement log payload should omit shop_item_id for old Supabase schemas');
+assert.equal(purchaseLogPayload.type, 'shop_purchase', 'shop purchases must keep their own type so calendar filters can exclude them');
+assert.equal(purchaseLogPayload.shop_item_id, 'shop-1', 'shop_item_id column now exists and must be kept in sync payloads');
 assert.equal(purchaseLogPayload.created_at, '2026-07-02T08:00:00.000Z', 'createdAt should still be synced');
+
+const todoLogPayload = sanitizeForSync({
+  id: 'log-2',
+  type: 'todo',
+  title: 'Finish report',
+  points: 5,
+  createdAt: '2026-07-02T09:00:00.000Z',
+}, 'user-1', '2026-07-02T09:01:00.000Z', 'achievement_logs');
+assert.equal(todoLogPayload.type, 'todo', 'todo logs must no longer be rewritten into task');
 
 console.log('syncState regression tests passed');

@@ -14,6 +14,7 @@ import { DateDetail } from './components/DateDetail';
 import { Auth } from './components/Auth';
 import { useSync } from './hooks/useSync';
 import { auth as supabaseAuth } from './supabase/database';
+import { normalizeAchievementLogs } from './utils/achievementLogs';
 
 type TabType = 'todo' | 'checkin' | 'time' | 'achievement' | 'shop' | 'inspiration' | 'sync';
 type BottomTabType = 'todos' | 'checkin' | 'inspirations' | 'timerecords' | 'settings' | 'shop';
@@ -65,7 +66,8 @@ function App() {
 
   // ✅ useCallback 防止每次渲染创建新函数，稳定 fetchFromCloud 依赖
   const handleDataFetched = useCallback((data: any) => {
-    const logs = data.achievementLogs || [];
+    // 历史脏数据内存纠正（旧同步层把商店购买降级成了 commodity）
+    const logs = normalizeAchievementLogs(data.achievementLogs || [], data.checkInRecords || []);
     const totalEarned = logs
       .filter((log: any) => log.type === 'task' || log.type === 'todo')
       .reduce((sum: number, log: any) => sum + (log.points || 0), 0);
