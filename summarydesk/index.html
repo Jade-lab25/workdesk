@@ -556,6 +556,12 @@ input:focus, textarea:focus { outline: none; }
 
     <!--pnid:EwXQEbSxSzZ46CRIGsDOhU--><!-- === Idea Tab === -->
     <div data-page-node-id="fUbYyP7Q15eZcqAbugdfdg" class="tab-pane" id="tab-idea">
+      <div class="idea-tpl-quick" style="display:flex;gap:8px;flex-wrap:wrap;align-items:center;margin-bottom:8px">
+        <span style="font-size:12px;color:#86909c">快速模板：</span>
+        <button type="button" class="idea-dir-btn" data-tpl="kedu">📈 刻度</button>
+        <button type="button" class="idea-dir-btn" data-tpl="emotion">🧯 情绪工单</button>
+        <button type="button" class="idea-dir-btn" data-tpl="hated">🔧 讨厌活盘点</button>
+      </div>
       <div data-page-node-id="U3VCjESFW9ddt3OqAQIIPR" class="idea-input-wrap">
         <textarea data-page-node-id="ZyL7zn9RU4OEubJ79GZGAz" class="idea-input" id="ideaInput" placeholder="随手记录灵感、想法、碎片思考…
 
@@ -655,6 +661,7 @@ input:focus, textarea:focus { outline: none; }
       </div>
 
       <button data-page-node-id="eFHRAyaelbMYIsTF9rgokP" class="btn btn-primary btn-block" id="generateBtn"><!--pnid:IaLNfmIAfFmHrUSHLYMtDB-->✨ 生成总结</button>
+      <button class="btn btn-secondary btn-block" id="monthSkeletonBtn" style="margin-top:8px">📝 月度战报骨架（自己填，不耗 AI）</button>
 
       <div data-page-node-id="obnj56U8yYJAYEOMy4nipm" class="result-area" id="resultArea" style="display:none"></div>
       <div data-page-node-id="PMeXi3JYFHa8XWcrsySTGl" class="result-actions" id="resultActions" style="display:none">
@@ -1858,6 +1865,7 @@ var App = (function () {
   var includeGrowth = false; // 生成总结时是否包含个人成长素材
   var lastResult = "";
   var lastSources = [];
+  var skeletonMode = false; // 月度战报骨架模式：结果区是可编辑 textarea，存档不经过 AI
   var editingRid = null;     // 灵感编辑模式下的目标 rid
   var calYear = (new Date()).getFullYear();
   var calMonth = (new Date()).getMonth(); // 0-based
@@ -1887,6 +1895,39 @@ var App = (function () {
     var el = $("#ideaCount");
     el.textContent = n + " 字 / " + IDEA_GOAL;
     el.classList.toggle("reached", n >= IDEA_GOAL);
+  }
+
+  // 快速模板：点按钮把骨架灌进输入框，标签走原有 #标签 解析，不新增数据结构
+  var IDEA_TEMPLATES = {
+    kedu: {
+      dir: "growth",
+      text: "【刻度】 #刻度\n场景：\nBefore→After：以前我会___，这次我___\n再进一步：下次我可以___"
+    },
+    emotion: {
+      dir: "growth",
+      text: "【情绪工单】 #情绪工单\n事实：（原话原事，禁止形容词）\n假设打叉：（我脑补的态度，写完自己划掉）\n下一步：（25分钟内能做的动作）"
+    },
+    hated: {
+      dir: "work",
+      text: "【讨厌活盘点】 #讨厌活盘点\nC 沟通求人：（场次+一句复盘）\nD 琐碎维护：（哪件在 SOP 化/已交出）\nE 长周期项目：（本月里程碑产物）\n没碰上的写「无」，有进步的补 Before→After"
+    }
+  };
+
+  function applyIdeaTemplate(key) {
+    var tpl = IDEA_TEMPLATES[key];
+    if (!tpl) return;
+    if (editingRid) { toast("先取消当前编辑，再用模板"); return; }
+    var input = $("#ideaInput");
+    if (input.value.trim() && !confirm("输入框里有内容，确定用模板覆盖吗？")) return;
+    currentIdeaDir = tpl.dir;
+    $$("#ideaDir .idea-dir-btn").forEach(function (b) {
+      b.classList.toggle("active", b.dataset.dir === tpl.dir);
+    });
+    input.value = tpl.text;
+    updateIdeaCount();
+    input.focus();
+    var idx = input.value.indexOf("："); // 光标落到第一个待填位
+    if (idx >= 0) input.setSelectionRange(idx + 1, idx + 1);
   }
 
   function exitEditMode() {
@@ -2723,8 +2764,53 @@ var App = (function () {
     return { system: systemPrompt, user: userPrompt };
   }
 
+  var MONTH_SKELETON = [
+    "# 月度战报 · {month}",
+    "",
+    "## 一、RPA 战果（硬交付：数据+产物）",
+    "- ",
+    "",
+    "## 二、AI 协作（帮他们打通了什么 + 我掌握到的 AI 业务信息）",
+    "- ",
+    "",
+    "## 三、人与复制（SOP / 教人 / 团队产出）",
+    "- ",
+    "",
+    "## 四、我的刻度（本月最明显的一个 Before→After，从灵感库 #刻度 里挑）",
+    "- ",
+    "",
+    "## 五、下月请老板拍板/给资源的一件事",
+    "- ",
+    ""
+  ].join("\n");
+
+  // 骨架版：不调 AI，结果区给可编辑 textarea，填完直接存档进报告库
+  function openMonthSkeleton() {
+    metaReviewCtx = null;
+    var now = new Date();
+    var ym = now.getFullYear() + "-" + p2(now.getMonth() + 1);
+    setRange("custom");
+    $("#rangeStart").value = ym + "-01";
+    $("#rangeEnd").value = today();
+    updateSourceCount();
+
+    var skeleton = MONTH_SKELETON.replace("{month}", ym);
+    var resultEl = $("#resultArea");
+    resultEl.classList.remove("loading");
+    resultEl.style.display = "block";
+    resultEl.innerHTML = '<textarea id="skeletonEditor" class="form-textarea" rows="22" ' +
+      'style="width:100%;font-family:inherit;font-size:13px;line-height:1.7">' + esc(skeleton) + '</textarea>';
+    $("#resultActions").style.display = "flex";
+    lastResult = skeleton;
+    lastSources = [];
+    skeletonMode = true;
+    toast("骨架已就位，填完点「存档」进报告库");
+    resultEl.scrollIntoView({ behavior: "smooth", block: "nearest" });
+  }
+
   async function generateSummary() {
     metaReviewCtx = null; // 普通总结生成，清掉跨期复盘上下文
+    skeletonMode = false;
     if (!LLM.isEnabled()) {
       if (confirm("还没有配置 AI 模型，是否现在去设置？")) {
         openSettings();
@@ -2855,6 +2941,10 @@ var App = (function () {
   }
 
   function copyResult() {
+    if (skeletonMode) {
+      var ed0 = $("#skeletonEditor");
+      if (ed0) lastResult = ed0.value;
+    }
     if (!lastResult) return;
     navigator.clipboard.writeText(lastResult).then(function () {
       toast("已复制到剪贴板");
@@ -2864,6 +2954,31 @@ var App = (function () {
   }
 
   function saveReport() {
+    if (skeletonMode) {
+      var editor = $("#skeletonEditor");
+      if (!editor) { skeletonMode = false; return; }
+      var skContent = editor.value;
+      if (!skContent.trim()) { toast("骨架还是空的，填一点再存"); return; }
+      var skStart = $("#rangeStart").value;
+      var skEnd = $("#rangeEnd").value;
+      var skNow = new Date();
+      var skYm = skNow.getFullYear() + "-" + p2(skNow.getMonth() + 1);
+      var skReport = {
+        kind: "custom",
+        template: "M",
+        range: skStart + (skStart !== skEnd ? " ~ " + skEnd : ""),
+        content: skContent,
+        source_rids: [],
+        created_at: nowIso()
+      };
+      Store.put("report:" + uid(), "report", "月度战报 · " + skYm, skReport);
+      skeletonMode = false;
+      lastResult = skContent;
+      $("#resultArea").innerHTML = renderMarkdownSimple(skContent);
+      toast("月度战报已存档到报告库");
+      renderReports();
+      return;
+    }
     if (!lastResult) return;
     if (metaReviewCtx) { saveMetaReview(); return; }
     var start = $("#rangeStart").value;
@@ -3040,6 +3155,7 @@ var App = (function () {
       return;
     }
     metaReviewCtx = { reports: reports };
+    skeletonMode = false;
     var bd = rangeBounds(reports);
 
     var systemPrompt =
@@ -3185,7 +3301,7 @@ var App = (function () {
         (total ? "没有符合筛选条件的报告" : "暂无历史报告") + '</div>';
     } else {
       list.forEach(function (r) {
-        var tpl = TEMPLATES[r.template] || { name: "自定义" };
+        var tpl = TEMPLATES[r.template] || { name: r.template === "M" ? "月度战报" : "自定义" };
         var rg = reportRangeOf(r);
         var saved = r.created_at ? localDateFromIso(r.created_at) : "";
         var checked = selectedReports[r.__rid];
@@ -3216,6 +3332,7 @@ var App = (function () {
         var r = Store.get(rid);
         if (!r) return;
         metaReviewCtx = null; // 看历史原文后，存档/重生成回到普通总结语义
+        skeletonMode = false;
         lastResult = r.content;
         $("#resultArea").style.display = "block";
         $("#resultArea").innerHTML = renderMarkdownSimple(r.content);
@@ -3473,6 +3590,9 @@ var App = (function () {
       }
     });
     $("#ideaInput").addEventListener("input", updateIdeaCount);
+    $$(".idea-tpl-quick [data-tpl]").forEach(function (btn) {
+      btn.onclick = function () { applyIdeaTemplate(btn.dataset.tpl); };
+    });
     updateIdeaCount();
 
     // 工作日志
@@ -3520,6 +3640,7 @@ var App = (function () {
       updateSourceCount();
     };
     $("#generateBtn").onclick = generateSummary;
+    $("#monthSkeletonBtn").onclick = openMonthSkeleton;
     $("#copyResult").onclick = copyResult;
     $("#saveReport").onclick = saveReport;
     $("#regenResult").onclick = function () {
