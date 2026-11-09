@@ -44,6 +44,7 @@ function App() {
     deleteTimeRecord,
     updateTimeRecordNote,
     addManualTimeRecord,
+    addManualTimeRecords,
     startTimer,
     endTimer,
     addInspiration,
@@ -213,6 +214,7 @@ function App() {
                 onDelete={deleteTimeRecord}
                 onUpdateNote={updateTimeRecordNote}
                 onAddManual={addManualTimeRecord}
+                onAddManualBatch={addManualTimeRecords}
               />
             </div>
             <div className="md:col-span-2 lg:col-span-1">

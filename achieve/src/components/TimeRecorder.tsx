@@ -1,6 +1,8 @@
-import { useState, useEffect, useCallback } from 'react';
+import { useState, useEffect, useCallback, useMemo } from 'react';
 import type { TimeRecord } from '../types';
-import { Clock, Play, Square, Calendar, StickyNote, Trash2, Plus } from 'lucide-react';
+import { Clock, Play, Square, Calendar, StickyNote, Trash2, Plus, ClipboardPaste, AlertTriangle, CheckCircle2, XCircle, Info } from 'lucide-react';
+import { parseTsv, buildTimeRecordKey } from '../utils/parseTsv';
+import type { ManualTimeEntry } from '../utils/parseTsv';
 
 interface Toast {
   id: string;
@@ -17,9 +19,10 @@ interface TimeRecorderProps {
   onDelete: (id: string) => void;
   onUpdateNote: (id: string, note: string) => void;
   onAddManual: (content: string, startTime: string, endTime: string) => void;
+  onAddManualBatch: (entries: ManualTimeEntry[]) => void;
 }
 
-export function TimeRecorder({ records, selectedDate, onSelectDate, onStartTimer, onEndTimer, onDelete, onUpdateNote, onAddManual }: TimeRecorderProps) {
+export function TimeRecorder({ records, selectedDate, onSelectDate, onStartTimer, onEndTimer, onDelete, onUpdateNote, onAddManual, onAddManualBatch }: TimeRecorderProps) {
   const [content, setContent] = useState('');
   const [recordingId, setRecordingId] = useState<string | null>(null);
   const [elapsedTime, setElapsedTime] = useState(0);
@@ -33,6 +36,26 @@ export function TimeRecorder({ records, selectedDate, onSelectDate, onStartTimer
   const [mDate, setMDate] = useState('');
   const [mStart, setMStart] = useState('');
   const [mEnd, setMEnd] = useState('');
+
+  // 粘贴 TSV 批量补录弹窗
+  const [showPaste, setShowPaste] = useState(false);
+  const [tsvText, setTsvText] = useState('');
+
+  // 已有记录的重复键（全量，不限当天），仅用于生成疑似重复提示
+  const existingKeys = useMemo(
+    () => new Set(records
+      .filter(r => r.endTime)
+      .map(r => buildTimeRecordKey(r.startTime, r.endTime, r.content))),
+    [records],
+  );
+
+  // 每次按键实时解析，空文本给 null（EMPTY 态）
+  const pasteResult = useMemo(
+    () => (tsvText.trim() === '' ? null : parseTsv(tsvText, { existingKeys })),
+    [tsvText, existingKeys],
+  );
+  const pasteValidCount = pasteResult?.summary.valid ?? 0;
+  const pasteErrorCount = pasteResult?.summary.error ?? 0;
 
   const addToast = useCallback((message: string, type: 'success' | 'error' | 'info' | 'warning' = 'success') => {
     const id = Date.now().toString();
@@ -140,6 +163,35 @@ export function TimeRecorder({ records, selectedDate, onSelectDate, onStartTimer
     onSelectDate(mDate); // 跳到补录日期，所见即所得
   };
 
+  const handleOpenPaste = () => {
+    setTsvText('');
+    setShowPaste(true);
+  };
+
+  const handleConfirmPaste = () => {
+    if (!pasteResult || pasteValidCount === 0) return;
+    const validRows = pasteResult.rows.filter(r => r.status === 'valid');
+    const entries: ManualTimeEntry[] = validRows.map(r => ({
+      content: r.content,
+      startTime: r.startISO,
+      endTime: r.endISO,
+      note: r.note,
+    }));
+    onAddManualBatch(entries);
+
+    const dates = [...new Set(validRows.map(r => r.date))].sort();
+    const msg = pasteErrorCount > 0
+      ? `已批量补录 ${entries.length} 条，${pasteErrorCount} 行格式错误未导入`
+      : `已批量补录 ${entries.length} 条`;
+    addToast(msg, pasteErrorCount > 0 ? 'warning' : 'success');
+    if (dates.length > 1) {
+      addToast(`跨 ${dates.length} 天，已跳转至最早日期 ${dates[0]}`, 'info');
+    }
+    onSelectDate(dates[0]); // 跳到补录日期，所见即所得
+    setShowPaste(false);
+    setTsvText('');
+  };
+
   const formatDuration = (seconds: number) => {
     const hours = Math.floor(seconds / 3600);
     const mins = Math.floor((seconds % 3600) / 60);
@@ -161,13 +213,20 @@ export function TimeRecorder({ records, selectedDate, onSelectDate, onStartTimer
 
   const formatTime = (dateStr: string) => {
     const date = new Date(dateStr);
-    return date.toLocaleString('zh-CN', { 
-      month: '2-digit', 
-      day: '2-digit', 
-      hour: '2-digit', 
+    return date.toLocaleString('zh-CN', {
+      month: '2-digit',
+      day: '2-digit',
+      hour: '2-digit',
       minute: '2-digit',
       timeZone: 'Asia/Shanghai'
     });
+  };
+
+  // 粘贴预览用：本地时区 ISO → HH:MM（与记录实际归属时区一致，不做 UTC 换算）
+  const isoToHM = (iso: string) => {
+    if (!iso) return '—';
+    const d = new Date(iso);
+    return `${String(d.getHours()).padStart(2, '0')}:${String(d.getMinutes()).padStart(2, '0')}`;
   };
 
   const completedRecords = filteredRecords.filter(r => r.endTime);
@@ -217,6 +276,13 @@ export function TimeRecorder({ records, selectedDate, onSelectDate, onStartTimer
             >
               <Plus className="w-4 h-4" />
               手动补录
+            </button>
+            <button
+              onClick={handleOpenPaste}
+              className="px-3 py-1.5 border border-purple-200 text-purple-600 rounded-lg text-sm hover:bg-purple-50 transition-colors flex items-center gap-1"
+            >
+              <ClipboardPaste className="w-4 h-4" />
+              粘贴补录
             </button>
             <Calendar className="w-4 h-4 text-gray-500" />
             <input
@@ -452,6 +518,137 @@ export function TimeRecorder({ records, selectedDate, onSelectDate, onStartTimer
                 保存
               </button>
             </div>
+          </div>
+        </div>
+      )}
+
+      {showPaste && (
+        <div className="fixed inset-0 bg-black/50 flex items-center justify-center z-50 p-4">
+          <div className="bg-white rounded-xl p-6 w-full max-w-3xl max-h-[90vh] overflow-y-auto">
+            <h3 className="text-lg font-bold text-gray-800 mb-4 flex items-center gap-2">
+              <ClipboardPaste className="w-5 h-5 text-purple-500" />
+              粘贴补录时间记录
+            </h3>
+
+            <textarea
+              value={tsvText}
+              onChange={(e) => setTsvText(e.target.value)}
+              rows={8}
+              className="w-full px-3 py-2 border border-gray-200 rounded-lg focus:outline-none focus:ring-2 focus:ring-purple-500 font-mono text-sm resize-y"
+              placeholder={'日期\t开始时间\t结束时间\t时长\t专注事项\t进展记录\t分心次数\n2026-11-09\t11:20\t11:44\t23:40\t日常工作\t解决顺丰渠道问题\t-'}
+              autoFocus
+            />
+
+            {pasteResult && !pasteResult.headerDetected && (
+              <div className="mt-3 flex items-start gap-2 p-3 bg-amber-50 border border-amber-200 rounded-lg">
+                <AlertTriangle className="w-4 h-4 text-amber-500 mt-0.5 shrink-0" />
+                <p className="text-sm text-amber-700">未识别到表头，已按 日期 / 开始 / 结束 / 时长 / 事项 / 进展 / 分心 固定顺序解析</p>
+              </div>
+            )}
+
+            {pasteResult && pasteResult.summary.total > 0 && (
+              <div className="mt-3 flex flex-wrap items-center gap-x-4 gap-y-1 text-sm text-gray-600">
+                <span>共 {pasteResult.summary.total} 行</span>
+                <span className="text-green-600">可导入 {pasteValidCount}</span>
+                {pasteErrorCount > 0 && <span className="text-red-600">格式错误 {pasteErrorCount}</span>}
+                {pasteResult.summary.duplicateHints > 0 && (
+                  <span className="flex items-center gap-1 text-gray-500">
+                    <Info className="w-4 h-4" />
+                    {pasteResult.summary.duplicateHints} 行疑似与已有记录重复，仍会照常导入
+                  </span>
+                )}
+              </div>
+            )}
+
+            {pasteResult && pasteResult.summary.total === 0 && (
+              <p className="mt-3 text-sm text-gray-400">仅识别到表头或空行，粘贴数据行后出现预览</p>
+            )}
+
+            {pasteResult && pasteResult.rows.length > 0 && (
+              <div className="mt-3 border border-gray-200 rounded-lg overflow-x-auto">
+                <table className="w-full text-sm">
+                  <thead className="bg-gray-50 text-gray-500">
+                    <tr>
+                      <th className="px-2 py-2 text-left font-medium whitespace-nowrap">行号</th>
+                      <th className="px-2 py-2 text-left font-medium whitespace-nowrap">日期</th>
+                      <th className="px-2 py-2 text-left font-medium whitespace-nowrap">开始–结束</th>
+                      <th className="px-2 py-2 text-left font-medium whitespace-nowrap">实际时长</th>
+                      <th className="px-2 py-2 text-left font-medium">专注事项</th>
+                      <th className="px-2 py-2 text-left font-medium">进展记录</th>
+                      <th className="px-2 py-2 text-left font-medium whitespace-nowrap">状态</th>
+                    </tr>
+                  </thead>
+                  <tbody className="divide-y divide-gray-100">
+                    {pasteResult.rows.map(row => {
+                      const mismatch = row.durationSeconds !== null && row.actualSeconds !== null
+                        && Math.abs(row.durationSeconds - row.actualSeconds) > 60;
+                      return (
+                        <tr key={row.sourceLine} className={row.status === 'error' ? 'bg-red-50/50' : ''}>
+                          <td className="px-2 py-2 text-gray-400 whitespace-nowrap align-top">{row.sourceLine}</td>
+                          <td className="px-2 py-2 whitespace-nowrap align-top">{row.date || '—'}</td>
+                          <td className="px-2 py-2 whitespace-nowrap align-top">
+                            {row.startISO ? `${isoToHM(row.startISO)}–${isoToHM(row.endISO)}` : '—'}
+                          </td>
+                          <td className="px-2 py-2 whitespace-nowrap align-top">
+                            {row.actualSeconds !== null && row.actualSeconds >= 0 ? (
+                              mismatch ? (
+                                <span className="text-amber-600">
+                                  {formatDuration(row.actualSeconds)}
+                                  <span className="block text-xs text-amber-500">
+                                    （标注 {formatDuration(row.durationSeconds ?? 0)}）
+                                  </span>
+                                </span>
+                              ) : formatDuration(row.actualSeconds)
+                            ) : '—'}
+                          </td>
+                          <td className="px-2 py-2 text-gray-800 align-top">{row.content || '—'}</td>
+                          <td className="px-2 py-2 text-gray-600 align-top">{row.note || '—'}</td>
+                          <td className="px-2 py-2 whitespace-nowrap align-top">
+                            {row.status === 'valid' ? (
+                              <span className="flex items-center gap-1 text-green-600">
+                                <CheckCircle2 className="w-4 h-4 shrink-0" />
+                                可导入
+                              </span>
+                            ) : (
+                              <span className="flex items-start gap-1 text-red-600">
+                                <XCircle className="w-4 h-4 mt-0.5 shrink-0" />
+                                <span className="text-xs">
+                                  {row.errors.map(e => <span key={e} className="block">{e}</span>)}
+                                </span>
+                              </span>
+                            )}
+                            {row.warnings.length > 0 && (
+                              <span className="block mt-1 text-xs text-amber-600">
+                                {row.warnings.map(w => <span key={w} className="block">{w}</span>)}
+                              </span>
+                            )}
+                          </td>
+                        </tr>
+                      );
+                    })}
+                  </tbody>
+                </table>
+              </div>
+            )}
+
+            <div className="flex gap-3 mt-6 items-center">
+              <button
+                onClick={() => { setShowPaste(false); setTsvText(''); }}
+                className="flex-1 px-4 py-2 border border-gray-200 rounded-lg hover:bg-gray-50 transition-colors"
+              >
+                取消
+              </button>
+              <button
+                onClick={handleConfirmPaste}
+                disabled={pasteValidCount === 0}
+                className="flex-1 px-4 py-2 bg-purple-500 text-white rounded-lg hover:bg-purple-600 transition-colors disabled:opacity-50 disabled:cursor-not-allowed"
+              >
+                确认导入（{pasteValidCount} 条）
+              </button>
+            </div>
+            {pasteErrorCount > 0 && (
+              <p className="mt-2 text-right text-xs text-gray-400">{pasteErrorCount} 行格式错误，确认后不会导入</p>
+            )}
           </div>
         </div>
       )}

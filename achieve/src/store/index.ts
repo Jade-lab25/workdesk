@@ -3,6 +3,7 @@ import type { Todo, CheckInProject, CheckInRecord, TimeRecord, AchievementLog, A
 import { addDeletedId, addDeletedIds } from '../utils/syncState';
 import { prepareImportedState } from '../utils/importState';
 import { isActivityLog, normalizeAchievementLogs } from '../utils/achievementLogs';
+import type { ManualTimeEntry } from '../utils/parseTsv';
 
 const STORAGE_KEY = 'work-status-app-data';
 
@@ -363,6 +364,24 @@ export function useAppState() {
       startTimestamp: new Date(startTime).getTime(),
     });
     setState(prev => ({ ...prev, timeRecords: [record, ...prev.timeRecords] }));
+  }, []);
+
+  // 粘贴 TSV 批量补录：字段构造与单条版逐字段等价，id 用 base-序号防同毫秒碰撞；
+  // 一次 setState 完成整批写入，同步层一轮 upsert 推完
+  const addManualTimeRecords = useCallback((entries: ManualTimeEntry[]) => {
+    if (entries.length === 0) return;
+    const base = Date.now();
+    const records: TimeRecord[] = entries.map((entry, i) => markDirty({
+      id: `${base}-${i}`,
+      startTime: entry.startTime,
+      endTime: entry.endTime,
+      content: entry.content.trim(),
+      note: entry.note,
+      createdAt: entry.startTime,
+      todoId: null,
+      startTimestamp: new Date(entry.startTime).getTime(),
+    }));
+    setState(prev => ({ ...prev, timeRecords: [...records, ...prev.timeRecords] }));
   }, []);
 
   const deleteTimeRecord = useCallback((id: string) => {
@@ -734,6 +753,7 @@ export function useAppState() {
     deleteCheckInProject,
     checkIn,
     addManualTimeRecord,
+    addManualTimeRecords,
     deleteTimeRecord,
     updateTimeRecordNote,
     startTimer,
