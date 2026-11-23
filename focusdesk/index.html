@@ -2,7 +2,6 @@
 <!DOCTYPE html>
 <html data-page-node-id="3Y7tPpDq6ccqRCT2AlhliA" lang="zh-CN">
 <head data-page-node-id="bi2Uf60g6ivM8iELSoIjeX">
-<script data-page-node-id="OTfoY1e9WGNxuhLN1UJ3Bk" src="/page/page_comm/inject.js"></script>
 <meta data-page-node-id="DFfE3y9BjdFBpjZriWVyS4" charset="UTF-8">
 <meta data-page-node-id="2kfWHcPBamWigqMfSyPYxI" content="width=device-width,initial-scale=1.0,viewport-fit=cover" name="viewport">
 <meta data-page-node-id="TkLZXlBHDlkwIW08ZvYyeg" content="no-cache, no-store, must-revalidate" http-equiv="Cache-Control">
@@ -466,6 +465,46 @@ a{color:var(--primary);text-decoration:none}
 .arc-actions button:hover{border-color:var(--primary);color:var(--primary)}
 .arc-actions button.del:hover{border-color:var(--danger);color:var(--danger);background:rgba(239,68,68,.06)}
 
+/* ============ v35：今日重点 / 其他待处理折叠 / 逾期清理 / 目标下一步 ============ */
+.tf-star{color:var(--text-3);padding:6px;border-radius:7px;min-height:auto;flex-shrink:0}
+.tf-star svg{width:16px;height:16px}
+.tf-star:hover{background:var(--warn-bg);color:var(--warn)}
+.tf-star.on{color:var(--warn)}
+.tf-star.on svg{fill:var(--warn)}
+.focus-section{border:1px solid #fde68a;background:linear-gradient(135deg,#fffdf5 0%,#fff 100%);border-radius:var(--radius-sm);padding:12px 14px;margin-bottom:12px}
+.focus-head{display:flex;align-items:center;gap:8px;margin-bottom:10px;flex-wrap:wrap}
+.focus-head h4{font-size:13.5px;font-weight:700;display:inline-flex;align-items:center;gap:5px}
+.focus-head .fh-count{background:var(--warn);color:#fff;font-size:11px;padding:2px 9px;border-radius:10px;font-weight:600}
+.focus-head .fh-hint{font-size:11.5px;color:var(--text-3);margin-left:auto;font-weight:400}
+.today-other{margin-top:12px;border-top:1px dashed var(--border);padding-top:10px}
+.today-other summary{list-style:none;display:flex;align-items:center;gap:8px;font-size:13px;font-weight:600;color:var(--text-2);cursor:pointer;padding:4px 2px;user-select:none}
+.today-other summary::-webkit-details-marker{display:none}
+.today-other summary .to-caret{transition:transform .15s;display:inline-flex;color:var(--text-3)}
+.today-other summary .to-caret svg{width:14px;height:14px}
+.today-other[open] summary .to-caret{transform:rotate(90deg)}
+.today-other summary .to-count{background:var(--border-2);color:var(--text-2);font-size:11px;padding:2px 9px;border-radius:10px;font-weight:600}
+.today-other .today-list{margin-top:10px}
+.overdue-cleanup{background:var(--card);border:1px solid #fecaca;border-radius:var(--radius);padding:16px 18px;margin-bottom:22px;box-shadow:var(--shadow)}
+.overdue-cleanup .today-head{margin-bottom:12px}
+.oc-list{display:flex;flex-direction:column;gap:6px;margin-bottom:12px;max-height:260px;overflow-y:auto}
+.oc-item{display:flex;align-items:center;gap:10px;padding:8px 12px;background:var(--danger-bg);border-radius:var(--radius-sm);font-size:13px;cursor:pointer;flex-wrap:wrap}
+.oc-item input{width:16px;height:16px;flex-shrink:0;accent-color:var(--danger);cursor:pointer}
+.oc-item .oc-title{flex:1;min-width:120px;font-weight:500;word-break:break-word;color:var(--text)}
+.oc-item .ti-meta{flex-wrap:wrap}
+.oc-actions{display:flex;gap:8px;flex-wrap:wrap}
+.oc-actions .btn{min-height:34px}
+.oc-tip{font-size:11.5px;color:var(--text-3);margin-top:8px}
+.gc-next{display:flex;align-items:center;gap:8px;background:var(--primary-light);border-radius:var(--radius-sm);padding:9px 12px;margin:10px 0 12px;font-size:12.5px;flex-wrap:wrap}
+.gc-next .gcn-label{font-weight:700;color:var(--primary);flex-shrink:0}
+.gc-next .gcn-text{flex:1;min-width:120px;font-weight:500;color:var(--text);word-break:break-word}
+.gc-next .gcn-empty{color:var(--text-2)}
+.od-more{margin-top:10px;font-size:12px;color:var(--text-2);display:flex;align-items:center;gap:8px;flex-wrap:wrap}
+.od-more .btn{min-height:28px;padding:3px 10px}
+@media(max-width:860px){
+  .focus-head .fh-hint{display:none}
+  .oc-actions .btn{flex:1}
+}
+
 </style>
 </head>
 <body data-page-node-id="523Khx7dGrdQ2eUrjA1GSB">
@@ -508,7 +547,7 @@ a{color:var(--primary);text-decoration:none}
   </nav>
   <div data-page-node-id="2QAn4PC3r5Z0xPNMxHNPlu" class="sidebar-foot">
     <div data-page-node-id="UzntEMa3OvWXemRvGcuDCI" class="sync"><span data-page-node-id="xYKB5q1fvN8xlcI2ywpWo3" class="dot" id="syncDot"></span><span data-page-node-id="k2pRoEC7dOdxsEmPmFFhMb" id="syncText"><!--pnid:2sFedD5zwEerHeNNxb3KHj-->已同步</span></div>
-    <div data-page-node-id="KfHfNBsyB9PP824MMftXTB"><!--pnid:yRn7DHwbav5Qdgg5rBeXJN-->数据云端同步 · 离线自动缓存 · <strong data-page-node-id="gZn7ug6Cn8IbuQOzJqEq8r" style="color:var(--primary)"><!--pnid:uroGULbiaIK5cQPnWR1zEg-->v34</strong></div>
+    <div data-page-node-id="KfHfNBsyB9PP824MMftXTB"><!--pnid:yRn7DHwbav5Qdgg5rBeXJN-->数据云端同步 · 离线自动缓存 · <strong data-page-node-id="gZn7ug6Cn8IbuQOzJqEq8r" style="color:var(--primary)"><!--pnid:uroGULbiaIK5cQPnWR1zEg-->v35</strong></div>
   </div>
 </aside>
 <div data-page-node-id="34eDu4v4ynBInUhzmZxING" class="sidebar-mask" id="sidebarMask"></div>
@@ -684,7 +723,9 @@ var ICONS = {
   chevronDown: '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.4" stroke-linecap="round" stroke-linejoin="round"><polyline points="6 9 12 15 18 9"/></svg>',
   grip: '<svg viewBox="0 0 24 24" fill="currentColor"><circle cx="9" cy="6" r="1.6"/><circle cx="15" cy="6" r="1.6"/><circle cx="9" cy="12" r="1.6"/><circle cx="15" cy="12" r="1.6"/><circle cx="9" cy="18" r="1.6"/><circle cx="15" cy="18" r="1.6"/></svg>',
   subplus: '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round"><line x1="12" y1="5" x2="12" y2="19"/><line x1="5" y1="12" x2="19" y2="12"/></svg>',
-  archive: '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><rect x="2" y="3" width="20" height="5"/><path d="M4 8v11a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V8"/><path d="M10 12h4"/></svg>'
+  archive: '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><rect x="2" y="3" width="20" height="5"/><path d="M4 8v11a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V8"/><path d="M10 12h4"/></svg>',
+  star: '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><polygon points="12 2 15.09 8.26 22 9.27 17 14.14 18.18 21.02 12 17.77 5.82 21.02 7 14.14 2 9.27 8.91 8.26 12 2"/></svg>',
+  starFill: '<svg viewBox="0 0 24 24" fill="currentColor" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><polygon points="12 2 15.09 8.26 22 9.27 17 14.14 18.18 21.02 12 17.77 5.82 21.02 7 14.14 2 9.27 8.91 8.26 12 2"/></svg>'
 };
 
 /* ============ Constants ============ */
@@ -757,7 +798,8 @@ var State = {
   kanbanGoal: '',     // 看板按所属目标筛选
   kanbanOwner: '',    // 看板按归属筛选
   habits: [],         // 长期打卡：习惯定义（从系统记录加载）
-  habitLogs: []       // 长期打卡：打卡日志 [{habitId,date,completedAt}]
+  habitLogs: [],      // 长期打卡：打卡日志 [{habitId,date,completedAt}]
+  todayOtherOpen: false // v35：今日页「其他待处理」折叠态（仅内存，不持久化）
 };
 
 var db = null;
@@ -1524,6 +1566,85 @@ function isTodoLike(r){
   return r.type===TYPE_TASK && (r.status===ST_TODO || r.status===ST_DOING);
 }
 
+/* ============ 今日重点（v35） ============
+ * 不新增表/字段：重点任务 id 列表存于一条隐藏系统记录（title 以 __  开头，
+ * 各视图经 isRecordHidden 过滤），内容放在 note 的 JSON 里：
+ *   { "focusIds": ["id1","id2","id3"] }
+ * 持久化完全复用现有链路：addRecord/updateRecord → saveLocal 本地缓存，
+ * 在线时经 WB_Cloud.schedulePush → fd_tasks 行 upsert（note 列原样往返），
+ * 多端合并走 mergeCloudRecords 的 updatedAt LWW。用户未手动选择时绝不写回。 */
+var FOCUS_META_TITLE = '__focusdesk_meta__';
+var FOCUS_META_ID = 'focusdesk_meta';
+var FOCUS_MAX = 3;
+function getFocusMetaRec(){
+  var recs = State.records.filter(function(r){ return r.title===FOCUS_META_TITLE; });
+  // 兼容双端首次同步前生成的同 title 重复记录：沿用 LWW 选最新，平局优先稳定 ID
+  return recs.reduce(function(latest, r){
+    if(!latest) return r;
+    var rt = Date.parse(r.updatedAt || r.updated_at || r.createdAt || r.created_at || '') || 0;
+    var lt = Date.parse(latest.updatedAt || latest.updated_at || latest.createdAt || latest.created_at || '') || 0;
+    return rt>lt || (rt===lt && r.id===FOCUS_META_ID && latest.id!==FOCUS_META_ID) ? r : latest;
+  }, null);
+}
+function getFocusIds(){
+  var rec = getFocusMetaRec();
+  if(!rec || !rec.note) return [];
+  try {
+    var data = JSON.parse(rec.note);
+    if(data && Array.isArray(data.focusIds)){
+      return data.focusIds.filter(function(x){ return typeof x==='string'; });
+    }
+  } catch(e){ /* 旧数据/损坏数据按无重点处理 */ }
+  return [];
+}
+// 重点只对仍存在且处于活跃态的任务有效；已完成/已归档/已删除的占位在写入时清掉
+function isFocusableRecord(r){
+  return !!r && !isRecordHidden(r) && r.type===TYPE_TASK && isActiveTask(r);
+}
+function saveFocusIds(ids){
+  var seen = {}, clean = [];
+  ids.forEach(function(id){
+    if(!seen[id] && isFocusableRecord(State.records.find(function(x){return x.id===id;}))){
+      seen[id] = 1; clean.push(id);
+    }
+  });
+  var rec = getFocusMetaRec();
+  if(!rec){
+    if(!clean.length) return; // 没有有效重点就不创建系统记录，零侵入
+    rec = { id: FOCUS_META_ID, title: FOCUS_META_TITLE, type: TYPE_TASK, status: ST_TODO,
+            note: JSON.stringify({ focusIds: clean }), subtasks: [], habits: [], habitLogs: [] };
+    addRecord(rec);
+    return;
+  }
+  rec.note = JSON.stringify({ focusIds: clean });
+  updateRecord(rec);
+}
+function toggleFocus(id){
+  var r = State.records.find(function(x){return x.id===id;});
+  if(!isFocusableRecord(r)){ toast('该任务当前不可设为重点', true); return; }
+  var ids = getFocusIds();
+  var idx = ids.indexOf(id);
+  if(idx >= 0){
+    ids.splice(idx, 1);
+    saveFocusIds(ids);
+    toast('已取消重点');
+  } else {
+    // 上限只统计仍在今日列表中的有效重点，与 renderToday 的收集/回退口径一致
+    var currentIds = [], seen = {};
+    ids.forEach(function(focusId){
+      var focused = State.records.find(function(x){return x.id===focusId;});
+      var inToday = isFocusableRecord(focused) &&
+        (isOverdue(focused) || isToday(focused) || focused.status===ST_DOING);
+      if(!seen[focusId] && inToday){ seen[focusId] = 1; currentIds.push(focusId); }
+    });
+    if(currentIds.length >= FOCUS_MAX){ toast('今日重点最多 '+FOCUS_MAX+' 项，请先取消一项', true); return; }
+    currentIds.push(id);
+    saveFocusIds(currentIds);
+    toast('已设为今日重点');
+  }
+  renderAll();
+}
+
 /* ============ Today view ============ */
 var HABIT_WEEK_NAMES = ['一','二','三','四','五','六','日'];
 function habitPeriodText(h){
@@ -1575,6 +1696,101 @@ function renderHabitStats(st){
   if(!st || (!st.cumulative && (!State.habits || !State.habits.length))) return '';
   var last = st.lastCheckIn ? fmtDate(st.lastCheckIn.slice(0,10)) : '—';
   return '<div class="habit-stats">长期打卡统计 · 累计 <b>'+st.cumulative+'</b> 次 · 上次 '+last+' · 本月 <b>'+st.monthlyActual+'/'+st.monthlyExpected+'</b> ('+st.rate+'%)</div>';
+}
+// 今日列表条目（重点区与「其他待处理」共用，保证完成/开始/拆解打卡操作完全一致）
+function renderTodayItemHTML(it, isFocused){
+  var r = it.r;
+  var h = '';
+  if(it.isSub){
+    // 拆解子任务条目
+    h += '<div class="today-item '+it.cls+'" data-sub="1" data-goal-id="'+it.goalId+'" data-pidx="'+it.pidx+'" data-cidx="'+it.cidx+'">';
+    h += '<span class="ti-cb" data-act="subcomplete" title="标记完成" data-goal-id="'+it.goalId+'" data-pidx="'+it.pidx+'" data-cidx="'+it.cidx+'"></span>';
+    h += '<div class="ti-body">';
+    h += '<div class="ti-title">'+escapeHtml(r.title)+'</div>';
+    h += '<div class="ti-meta">';
+    h += '<span class="tag tag-subtask" title="来自目标拆解">拆解</span>';
+    h += '<span class="tag tag-goal">'+escapeHtml(it.goalTitle)+'</span>';
+    if(r.priority) h += priorityTag(r.priority);
+    if(r.dueDate) h += dueTag(r.dueDate, ST_TODO);
+    h += '<span class="sub-reason">'+escapeHtml(it.reason)+'</span>';
+    h += '</div></div>';
+    h += '<button class="btn btn-sm btn-primary" data-act="subcomplete" data-goal-id="'+it.goalId+'" data-pidx="'+it.pidx+'" data-cidx="'+it.cidx+'">完成</button>';
+    h += '</div>';
+    return h;
+  }
+  h += '<div class="today-item '+it.cls+'" data-id="'+r.id+'">';
+  h += '<div class="ti-title">'+(r.recRule?'🔁 ':'')+escapeHtml(r.title)+'</div>';
+  h += '<div class="ti-meta">';
+  if(r.goal) h += '<span class="tag tag-goal">'+escapeHtml(r.goal)+'</span>';
+  h += priorityTag(r.priority);
+  h += ownerTag(r.owner);
+  h += dueTag(r.dueDate, r.status);
+  h += '</div>';
+  h += '<button class="btn btn-sm btn-icon tf-star'+(isFocused?' on':'')+'" data-act="focus" data-id="'+r.id+'" title="'+(isFocused?'取消今日重点':'设为今日重点')+'" aria-label="'+(isFocused?'取消今日重点':'设为今日重点')+'">'+(isFocused?ICONS.starFill:ICONS.star)+'</button>';
+  h += '<button class="btn btn-sm btn-primary" data-act="complete" data-id="'+r.id+'">完成</button>';
+  if(r.type===TYPE_TASK && r.status!==ST_DOING){
+    h += '<button class="btn btn-sm btn-ghost" data-act="start" data-id="'+r.id+'">开始</button>';
+  }
+  h += '</div>';
+  return h;
+}
+// 今日条目稳定 key（主任务用记录 id，拆解叶子用目标+下标组合）
+function todayItemKey(it){
+  return it.isSub ? ('sub:'+it.goalId+':'+it.pidx+':'+it.cidx) : it.r.id;
+}
+// v35：逾期任务批量清理区（多选 + 改期今天/明天 + 标记完成；不提供批量删除）
+function renderOverdueCleanup(){
+  var tasks = State.records.filter(function(r){
+    return r.type===TYPE_TASK && !isRecordHidden(r) && isOverdue(r);
+  }).sort(function(a,b){ return (a.dueDate||'9999').localeCompare(b.dueDate||'9999'); });
+  if(!tasks.length) return '';
+  var h = '<section class="overdue-cleanup">';
+  h += '<div class="today-head"><h3>逾期任务清理</h3><span class="count">'+tasks.length+' 项逾期</span></div>';
+  h += '<div class="oc-list">';
+  tasks.forEach(function(r){
+    h += '<label class="oc-item">';
+    h += '<input type="checkbox" class="oc-check" data-id="'+r.id+'" aria-label="选择逾期任务">';
+    h += '<span class="oc-title">'+escapeHtml(r.title)+'</span>';
+    h += '<span class="ti-meta">';
+    if(r.goal) h += '<span class="tag tag-goal">'+escapeHtml(r.goal)+'</span>';
+    h += priorityTag(r.priority);
+    h += dueTag(r.dueDate, r.status);
+    h += '</span></label>';
+  });
+  h += '</div>';
+  h += '<div class="oc-actions">';
+  h += '<button class="btn btn-sm btn-ghost" data-oc-act="today">改期到今天</button>';
+  h += '<button class="btn btn-sm btn-ghost" data-oc-act="tomorrow">改期到明天</button>';
+  h += '<button class="btn btn-sm btn-primary" data-oc-act="complete">标记完成</button>';
+  h += '</div>';
+  h += '<div class="oc-tip">勾选后批量处理，执行前会再次确认；仅支持改期与完成，不提供批量删除。</div>';
+  h += '</section>';
+  return h;
+}
+// 批量动作统一收口：逐条走 updateRecord（内部 saveLocal + 防抖云推），完成后 renderAll 全量刷新
+function runOverdueCleanup(act, container){
+  var checks = container.querySelectorAll('.oc-check:checked');
+  var ids = Array.prototype.map.call(checks, function(cb){ return cb.getAttribute('data-id'); });
+  if(!ids.length){ toast('请先勾选要处理的逾期任务', true); return; }
+  var label = act==='today' ? '改期到今天' : (act==='tomorrow' ? '改期到明天' : '标记完成');
+  if(!confirm('将对选中的 '+ids.length+' 项逾期任务执行「'+label+'」，是否确认？')) return;
+  var t = new Date(); t.setDate(t.getDate()+1);
+  var tomorrow = toISODate(t);
+  var done = 0;
+  ids.forEach(function(id){
+    var r = State.records.find(function(x){return x.id===id;});
+    if(!r) return;
+    if(act==='complete'){
+      r.status = ST_DONE;
+      r.completedAt = nowISO();
+    } else {
+      r.dueDate = (act==='tomorrow') ? tomorrow : todayISO();
+    }
+    updateRecord(r);
+    done++;
+  });
+  renderAll();
+  toast('已处理 '+done+' 项逾期任务：'+label);
 }
 function renderToday(){
   var c = document.getElementById('content');
@@ -1653,41 +1869,46 @@ function renderToday(){
     h += '<button class="btn btn-ghost btn-sm" data-today-act="addidea">记录灵感</button>';
     h += '</div></div>';
   } else {
-    items.forEach(function(it){
-      var r = it.r;
-      if(it.isSub){
-        // 拆解子任务条目
-        h += '<div class="today-item '+it.cls+'" data-sub="1" data-goal-id="'+it.goalId+'" data-pidx="'+it.pidx+'" data-cidx="'+it.cidx+'">';
-        h += '<span class="ti-cb" data-act="subcomplete" title="标记完成" data-goal-id="'+it.goalId+'" data-pidx="'+it.pidx+'" data-cidx="'+it.cidx+'"></span>';
-        h += '<div class="ti-body">';
-        h += '<div class="ti-title">'+escapeHtml(r.title)+'</div>';
-        h += '<div class="ti-meta">';
-        h += '<span class="tag tag-subtask" title="来自目标拆解">拆解</span>';
-        h += '<span class="tag tag-goal">'+escapeHtml(it.goalTitle)+'</span>';
-        if(r.priority) h += priorityTag(r.priority);
-        if(r.dueDate) h += dueTag(r.dueDate, ST_TODO);
-        h += '<span class="sub-reason">'+escapeHtml(it.reason)+'</span>';
-        h += '</div></div>';
-        h += '<button class="btn btn-sm btn-primary" data-act="subcomplete" data-goal-id="'+it.goalId+'" data-pidx="'+it.pidx+'" data-cidx="'+it.cidx+'">完成</button>';
-        h += '</div>';
-      } else {
-        h += '<div class="today-item '+it.cls+'" data-id="'+r.id+'">';
-        h += '<div class="ti-title">'+(r.recRule?'🔁 ':'')+escapeHtml(r.title)+'</div>';
-        h += '<div class="ti-meta">';
-        if(r.goal) h += '<span class="tag tag-goal">'+escapeHtml(r.goal)+'</span>';
-        h += priorityTag(r.priority);
-        h += ownerTag(r.owner);
-        h += dueTag(r.dueDate, r.status);
-        h += '</div>';
-        h += '<button class="btn btn-sm btn-primary" data-act="complete" data-id="'+r.id+'">完成</button>';
-        if(r.type===TYPE_TASK && r.status!==ST_DOING){
-          h += '<button class="btn btn-sm btn-ghost" data-act="start" data-id="'+r.id+'">开始</button>';
-        }
-        h += '</div>';
-      }
+    // v35：分区——今日重点（手动固定优先，否则按现有排序默认前 3，不写回数据）+ 其他待处理（默认折叠）
+    var focusIds = getFocusIds();
+    var manualMode = focusIds.length > 0;
+    var focusSet = {};
+    focusIds.forEach(function(id){ focusSet[id] = 1; });
+    var focusItems = manualMode
+      ? items.filter(function(it){ return !it.isSub && focusSet[it.r.id]; })
+      : [];
+    // 手动固定的重点已全部完成/移走（当前列表一个都匹配不上）时，回退为默认前 3 展示，仍然不写回
+    var autoFallback = !manualMode || focusItems.length === 0;
+    if(autoFallback) focusItems = items.slice(0, FOCUS_MAX);
+    var focusKeySet = {};
+    focusItems.forEach(function(it){ focusKeySet[todayItemKey(it)] = 1; });
+    var otherItems = items.filter(function(it){ return !focusKeySet[todayItemKey(it)]; });
+
+    h += '<div class="focus-section">';
+    h += '<div class="focus-head"><h4>⭐ 今日重点</h4><span class="fh-count">'+focusItems.length+' 项</span>';
+    h += '<span class="fh-hint">'+(autoFallback ? '按当前排序自动选取，点击 ☆ 可固定为重点（最多 '+FOCUS_MAX+' 项）' : '已手动固定 · 点击实心星可取消')+'</span></div>';
+    h += '<div class="today-list">';
+    focusItems.forEach(function(it){
+      var starred = !it.isSub && !!focusSet[it.r.id];
+      h += renderTodayItemHTML(it, starred);
     });
+    h += '</div></div>';
+
+    if(otherItems.length){
+      h += '<details class="today-other" id="todayOtherDetails"'+(State.todayOtherOpen?' open':'')+'>';
+      h += '<summary><span class="to-caret">'+ICONS.chevron+'</span>其他待处理<span class="to-count">'+otherItems.length+' 项</span></summary>';
+      h += '<div class="today-list">';
+      otherItems.forEach(function(it){
+        var starred = !it.isSub && !!focusSet[it.r.id];
+        h += renderTodayItemHTML(it, starred);
+      });
+      h += '</div></details>';
+    }
   }
   h += '</div></section>';
+
+  // v35：逾期任务轻量清理区（仅独立任务记录；拆解叶子不是独立记录，仍在列表/目标卡片内处理）
+  h += renderOverdueCleanup();
 
   // 长期打卡区块放在“今天要处理”下方
   h += renderHabitSection();
@@ -1764,6 +1985,24 @@ function bindTodayEvents(c){
       var act = b.getAttribute('data-today-act');
       if(act==='addtask'){ openEditor({type:TYPE_TASK,status:ST_TODO,subtasks:[],dueDate:todayISO()}); }
       else if(act==='addidea'){ openEditor({type:TYPE_IDEA,status:ST_IDEA,subtasks:[]}); }
+    });
+  });
+  // v35：今日重点置顶/取消（数据写入隐藏系统记录，走现有保存与云同步）
+  c.querySelectorAll('[data-act="focus"]').forEach(function(b){
+    b.addEventListener('click', function(e){
+      e.stopPropagation();
+      toggleFocus(b.getAttribute('data-id'));
+    });
+  });
+  // v35：记住「其他待处理」展开态，重渲染（如勾选完成）后保持
+  var otherDetails = c.querySelector('#todayOtherDetails');
+  if(otherDetails){
+    otherDetails.addEventListener('toggle', function(){ State.todayOtherOpen = otherDetails.open; });
+  }
+  // v35：逾期任务批量清理
+  c.querySelectorAll('[data-oc-act]').forEach(function(b){
+    b.addEventListener('click', function(){
+      runOverdueCleanup(b.getAttribute('data-oc-act'), c);
     });
   });
   // 长期打卡：完成 / 新增 / 编辑 / 删除
@@ -2002,6 +2241,51 @@ function goalProgress(g){
   return Math.round(c.done/c.total*100);
 }
 
+// v35：目标卡片的具体「下一步」——优先首个未完成拆解叶子（保持拆解顺序），
+// 其次首个未完成关联任务（按截止日期排序）；都没有时返回 null 走空状态。
+function goalNextStep(g){
+  var subs = g.subtasks || [];
+  for(var i=0;i<subs.length;i++){
+    var s = subs[i];
+    if(s.children && s.children.length){
+      for(var j=0;j<s.children.length;j++){
+        if(!s.children[j].done) return { text: s.children[j].text, kind:'拆解', dueDate: s.children[j].dueDate||'' };
+      }
+    } else if(!s.done){
+      return { text: s.text, kind:'拆解', dueDate: s.dueDate||'' };
+    }
+  }
+  var linked = State.records.filter(function(r){
+    return r.type===TYPE_TASK && r.goal===g.title && isActiveTask(r) && !isRecordHidden(r);
+  }).sort(cmpByDueDate);
+  if(linked.length) return { text: linked[0].title, kind:'关联任务', dueDate: linked[0].dueDate||'' };
+  return null;
+}
+function renderGoalNextStep(g, linked){
+  var nx = goalNextStep(g);
+  var h = '<div class="gc-next">';
+  if(nx){
+    h += '<span class="gcn-label">下一步</span>';
+    h += '<span class="tag tag-subtask">'+nx.kind+'</span>';
+    h += '<span class="gcn-text">'+escapeHtml(nx.text)+'</span>';
+    if(nx.dueDate) h += dueTag(nx.dueDate, ST_TODO);
+    return h+'</div>';
+  }
+  var leaves = countSubLeaves(g.subtasks);
+  var msg;
+  if(leaves.total>0 && leaves.done===leaves.total){
+    msg = '🎉 拆解任务已全部完成';
+  } else if(linked && linked.length && linked.every(isCompletedOrArchived)){
+    msg = '关联任务已全部完成';
+  } else if(g.status===ST_DONE || g.status===ST_ARCHIVE){
+    msg = '目标已完成 🎉';
+  } else {
+    msg = '还没有可执行的下一步，先拆解第一项任务吧';
+  }
+  h += '<span class="gcn-label">下一步</span><span class="gcn-empty">'+msg+'</span>';
+  return h+'</div>';
+}
+
 function renderGoalCard(g, compact){
   var pct = goalProgress(g);
   var R=24, C=2*Math.PI*R;
@@ -2024,6 +2308,7 @@ function renderGoalCard(g, compact){
   if(g.createdAt) h += '<span class="created-at" title="创建时间">'+fmtCreated(g.createdAt)+'</span>';
   h += '</div></div></div>';
   if(g.note) h += '<div class="gc-desc">'+escapeHtml(g.note)+'</div>';
+  h += renderGoalNextStep(g, linked);
   var leaves = countSubLeaves(g.subtasks);
   h += '<div class="gc-sub">';
   h += '<div class="gc-sub-head">拆解任务 <span class="gc-sub-count">'+leaves.done+'/'+leaves.total+'</span>';
@@ -2793,6 +3078,11 @@ function renderDashboard(){
       h += '<div class="oi"><span class="ot">'+escapeHtml(title)+src+'</span><span class="od">逾期'+Math.abs(d)+'天</span></div>';
     });
     h += '</div>';
+    // v35：版面只放 8 条时明确告知总量，并给「查看全部」入口（复用 KPI 只读弹层，弹层展示全量、与总数同源）
+    if(overdue.length > 8){
+      h += '<div class="od-more"><span>仅展示前 8 条，共 '+overdue.length+' 条逾期任务</span>';
+      h += '<button class="btn btn-sm btn-ghost" data-act="dash-overdue-all">查看全部 '+overdue.length+' 条</button></div>';
+    }
   }
   h += '</div>';
 
@@ -2848,6 +3138,10 @@ function bindDashEvents(c){
   // KPI 数据指标卡：点击数字查看关联任务（只读弹层）
   c.querySelectorAll('.kpi[data-kpi]').forEach(function(k){
     k.addEventListener('click', function(){ showDashPopup(k.getAttribute('data-kpi')); });
+  });
+  // v35：逾期卡片「查看全部 N 条」复用同一个只读弹层（弹层不截断，与 KPI 总数同源）
+  c.querySelectorAll('[data-act="dash-overdue-all"]').forEach(function(b){
+    b.addEventListener('click', function(){ showDashPopup('overdue'); });
   });
 }
 
